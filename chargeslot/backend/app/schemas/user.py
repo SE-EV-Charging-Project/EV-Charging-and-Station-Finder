@@ -36,6 +36,30 @@ class UserRegisterRequest(BaseModel):
         return v
 
 
+class UserLoginRequest(BaseModel):
+    identifier: str = Field(..., description="User email address or registered mobile number")
+    password: str = Field(..., description="User password")
+
+    @field_validator("identifier")
+    @classmethod
+    def clean_identifier(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("Identifier cannot be empty.")
+        return trimmed
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int  # in seconds
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
