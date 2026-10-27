@@ -89,7 +89,42 @@ class VerifyCodeRequest(BaseModel):
 class VerificationResponse(BaseModel):
     message: str
     is_verified: bool
-    dev_code: str | None = None  # Facilitates testing & dev preview
+    dev_code: str | None = None
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr = Field(..., description="Registered email address for password reset")
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    email: EmailStr = Field(..., description="Registered email address")
+    code: str = Field(..., min_length=6, max_length=6, description="6-digit password reset code")
+    new_password: str = Field(..., min_length=8, description="New account password satisfying policy")
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed.isdigit() or len(trimmed) != 6:
+            raise ValueError("Reset code must be exactly 6 digits.")
+        return trimmed
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        is_valid, msg = validate_password_policy(v)
+        if not is_valid:
+            raise ValueError(msg)
+        return v
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str = Field(..., description="Refresh token to be invalidated")
+
+
+class MessageResponse(BaseModel):
+    message: str
+    dev_code: str | None = None
 
 
 class UserResponse(BaseModel):
