@@ -138,3 +138,12 @@ class UserResponse(BaseModel):
     is_verified: bool
     is_active: bool
     created_at: datetime
+
+
+class RbacCheckResponse(BaseModel):
+    status: str = "authorized"
+    user_id: int
+    email: str
+    role: str
+    message: str
+
