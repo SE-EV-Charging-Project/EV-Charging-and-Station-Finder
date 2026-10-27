@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -6,7 +7,15 @@ from sqlalchemy import or_
 from app.core.config import settings
 from app.models.user import User, UserRole
 from app.models.audit import AuditLog
-from app.schemas.user import UserRegisterRequest, UserLoginRequest, TokenResponse
+from app.models.verification import VerificationCode
+from app.schemas.user import (
+    UserRegisterRequest,
+    UserLoginRequest,
+    TokenResponse,
+    SendVerificationCodeRequest,
+    VerifyCodeRequest,
+    VerificationResponse,
+)
 from app.utils.security import (
     hash_password,
     verify_password,
@@ -68,6 +77,123 @@ class AuthService:
         return new_user
 
     @staticmethod
+    def send_verification_code(
+        db: Session, request: SendVerificationCodeRequest, ip_address: str | None = None
+    ) -> VerificationResponse:
+        """
+        Generates and issues a 6-digit OTP verification code (CS19-003 / REQ-F1-03).
+        Valid for 10 minutes.
+        """
+        ident = request.identifier.strip().lower()
+        user = db.query(User).filter(
+            or_(User.email == ident, User.phone == request.identifier.strip())
+        ).first()
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No account found with this email or phone number."
+            )
+
+        # Invalidate previously active unused codes
+        db.query(VerificationCode).filter(
+            VerificationCode.user_id == user.id,
+            VerificationCode.is_used == False
+        ).update({"is_used": True})
+
+        # Generate cryptographic 6-digit code
+        code_str = f"{secrets.randbelow(1000000):06d}"
+        expires = datetime.now(timezone.utc) + timedelta(minutes=10)
+
+        otp_record = VerificationCode(
+            user_id=user.id,
+            code=code_str,
+            channel=request.channel,
+            is_used=False,
+            expires_at=expires
+        )
+        db.add(otp_record)
+
+        audit = AuditLog(
+            user_id=user.id,
+            action="VERIFICATION_CODE_SENT",
+            resource="users",
+            details=f"Issued 6-digit {request.channel} code expiring in 10 minutes",
+            ip_address=ip_address
+        )
+        db.add(audit)
+        db.commit()
+
+        return VerificationResponse(
+            message=f"Verification code sent via {request.channel}.",
+            is_verified=user.is_verified,
+            dev_code=code_str
+        )
+
+    @staticmethod
+    def verify_code(
+        db: Session, request: VerifyCodeRequest, ip_address: str | None = None
+    ) -> VerificationResponse:
+        """
+        Verifies the user's 6-digit OTP code and updates is_verified status (CS19-003 / REQ-F1-03).
+        """
+        ident = request.identifier.strip().lower()
+        user = db.query(User).filter(
+            or_(User.email == ident, User.phone == request.identifier.strip())
+        ).first()
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No account found with this email or phone number."
+            )
+
+        otp_record = db.query(VerificationCode).filter(
+            VerificationCode.user_id == user.id,
+            VerificationCode.code == request.code,
+            VerificationCode.is_used == False
+        ).order_by(VerificationCode.id.desc()).first()
+
+        if not otp_record:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid verification code."
+            )
+
+        # Check expiration
+        now = datetime.now(timezone.utc)
+        expires_at_utc = (
+            otp_record.expires_at if otp_record.expires_at.tzinfo
+            else otp_record.expires_at.replace(tzinfo=timezone.utc)
+        )
+        if expires_at_utc < now:
+            otp_record.is_used = True
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Verification code has expired. Please request a new code."
+            )
+
+        # Consume code and verify account
+        otp_record.is_used = True
+        user.is_verified = True
+
+        audit = AuditLog(
+            user_id=user.id,
+            action="USER_VERIFIED",
+            resource="users",
+            details=f"User {user.email} verified contact details via {otp_record.channel}",
+            ip_address=ip_address
+        )
+        db.add(audit)
+        db.commit()
+
+        return VerificationResponse(
+            message="Contact details successfully verified.",
+            is_verified=True
+        )
+
+    @staticmethod
     def login_user(db: Session, request: UserLoginRequest, ip_address: str | None = None) -> TokenResponse:
         """
         Authenticates user and issues JWT tokens (CS19-004, CS19-005, CS19-009).
@@ -76,14 +202,12 @@ class AuthService:
         - Locks account for 15 minutes after 5 failed attempts (CS19-005)
         """
         ident = request.identifier.strip().lower()
-        # Find user by email or phone
         user = db.query(User).filter(
             or_(User.email == ident, User.phone == request.identifier.strip())
         ).first()
 
         now = datetime.now(timezone.utc)
 
-        # Generic error message to prevent enumeration (CS19-009)
         generic_err = HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email/phone or password."
@@ -94,7 +218,6 @@ class AuthService:
 
         # Check if user account is locked (CS19-005)
         if user.locked_until:
-            # Ensure locked_until has timezone info for comparison
             locked_until_utc = user.locked_until if user.locked_until.tzinfo else user.locked_until.replace(tzinfo=timezone.utc)
             if locked_until_utc > now:
                 remaining_sec = (locked_until_utc - now).total_seconds()
@@ -104,7 +227,6 @@ class AuthService:
                     detail=f"Account is temporarily locked. Try again after {remaining_min} minute(s)."
                 )
             else:
-                # Lockout period has elapsed, reset
                 user.locked_until = None
                 user.failed_login_attempts = 0
 
@@ -143,7 +265,6 @@ class AuthService:
         db.add(audit)
         db.commit()
 
-        # Generate tokens
         access_token = create_access_token({
             "sub": str(user.id),
             "email": user.email,

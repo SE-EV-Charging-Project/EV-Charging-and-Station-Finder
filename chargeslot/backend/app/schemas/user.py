@@ -60,6 +60,38 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 
+class SendVerificationCodeRequest(BaseModel):
+    identifier: str = Field(..., description="Email address or phone number to send verification code to")
+    channel: str = Field("email", description="Verification channel: 'email' or 'phone'")
+
+    @field_validator("channel")
+    @classmethod
+    def validate_channel(cls, v: str) -> str:
+        channel_lower = v.strip().lower()
+        if channel_lower not in ["email", "phone"]:
+            raise ValueError("Channel must be 'email' or 'phone'.")
+        return channel_lower
+
+
+class VerifyCodeRequest(BaseModel):
+    identifier: str = Field(..., description="Registered email address or phone number")
+    code: str = Field(..., min_length=6, max_length=6, description="6-digit verification code")
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed.isdigit() or len(trimmed) != 6:
+            raise ValueError("Verification code must be exactly 6 digits.")
+        return trimmed
+
+
+class VerificationResponse(BaseModel):
+    message: str
+    is_verified: bool
+    dev_code: str | None = None  # Facilitates testing & dev preview
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
