@@ -15,9 +15,12 @@ from app.schemas.user import (
     MessageResponse,
     UserResponse,
 )
+from app.api.deps import get_current_user
+from app.models.user import User
 from app.services.auth_service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
 
 
 @router.post(
@@ -145,3 +148,17 @@ def logout(
 ):
     client_ip = req.client.host if req.client else None
     return AuthService.logout_user(db=db, request=request_data, ip_address=client_ip)
+
+
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get current user profile",
+    description="Returns the profile of the authenticated caller (CS19-011 / REQ-F1-11)."
+)
+def get_me(
+    current_user: User = Depends(get_current_user)
+):
+    return current_user
+
