@@ -44,3 +44,5 @@ class User(Base):
 
     audit_logs = relationship("AuditLog", back_populates="user", cascade="all, delete-orphan")
     verification_codes = relationship("VerificationCode", back_populates="user", cascade="all, delete-orphan")
+    password_reset_codes = relationship("PasswordResetCode", back_populates="user", cascade="all, delete-orphan")
+    revoked_tokens = relationship("RevokedToken", back_populates="user", cascade="all, delete-orphan")

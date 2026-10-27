@@ -6,6 +6,10 @@ from app.schemas.user import (
     SendVerificationCodeRequest,
     VerifyCodeRequest,
     VerificationResponse,
+    PasswordResetRequest,
+    PasswordResetConfirmRequest,
+    LogoutRequest,
+    MessageResponse,
     UserResponse,
 )
 
@@ -17,5 +21,9 @@ __all__ = [
     "SendVerificationCodeRequest",
     "VerifyCodeRequest",
     "VerificationResponse",
+    "PasswordResetRequest",
+    "PasswordResetConfirmRequest",
+    "LogoutRequest",
+    "MessageResponse",
     "UserResponse",
 ]

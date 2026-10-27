@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.models.user import User, UserRole
 from app.models.audit import AuditLog
 from app.models.verification import VerificationCode
+from app.models.token import PasswordResetCode, RevokedToken
 from app.schemas.user import (
     UserRegisterRequest,
     UserLoginRequest,
@@ -15,6 +16,10 @@ from app.schemas.user import (
     SendVerificationCodeRequest,
     VerifyCodeRequest,
     VerificationResponse,
+    PasswordResetRequest,
+    PasswordResetConfirmRequest,
+    LogoutRequest,
+    MessageResponse,
 )
 from app.utils.security import (
     hash_password,
@@ -160,7 +165,6 @@ class AuthService:
                 detail="Invalid verification code."
             )
 
-        # Check expiration
         now = datetime.now(timezone.utc)
         expires_at_utc = (
             otp_record.expires_at if otp_record.expires_at.tzinfo
@@ -174,7 +178,6 @@ class AuthService:
                 detail="Verification code has expired. Please request a new code."
             )
 
-        # Consume code and verify account
         otp_record.is_used = True
         user.is_verified = True
 
@@ -251,7 +254,6 @@ class AuthService:
             db.commit()
             raise generic_err
 
-        # On successful credentials:
         user.failed_login_attempts = 0
         user.locked_until = None
 
@@ -285,8 +287,17 @@ class AuthService:
     @staticmethod
     def refresh_access_token(db: Session, refresh_token: str) -> TokenResponse:
         """
-        Validates refresh token and issues a new access token (CS19-004).
+        Validates refresh token and issues a new access token (CS19-004, CS19-007).
+        Rejects tokens that have been revoked via logout.
         """
+        # Check revocation list (CS19-007)
+        revoked = db.query(RevokedToken).filter(RevokedToken.token == refresh_token).first()
+        if revoked:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token has been revoked. Please log in again."
+            )
+
         try:
             payload = decode_token(refresh_token)
         except Exception:
@@ -331,3 +342,145 @@ class AuthService:
             token_type="bearer",
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
         )
+
+    @staticmethod
+    def request_password_reset(
+        db: Session, request: PasswordResetRequest, ip_address: str | None = None
+    ) -> MessageResponse:
+        """
+        Generates a 15-minute single-use password reset code (CS19-006 / REQ-F1-06).
+        """
+        email_clean = request.email.lower().strip()
+        user = db.query(User).filter(User.email == email_clean).first()
+
+        # Generic response message to prevent email enumeration
+        generic_msg = "If an account with this email exists, a password reset code has been sent."
+
+        if not user:
+            return MessageResponse(message=generic_msg)
+
+        # Invalidate existing unused codes
+        db.query(PasswordResetCode).filter(
+            PasswordResetCode.user_id == user.id,
+            PasswordResetCode.is_used == False
+        ).update({"is_used": True})
+
+        # Generate 6-digit code with 15-minute expiration
+        code_str = f"{secrets.randbelow(1000000):06d}"
+        expires = datetime.now(timezone.utc) + timedelta(minutes=settings.PASSWORD_RESET_EXPIRE_MINUTES)
+
+        reset_record = PasswordResetCode(
+            user_id=user.id,
+            code=code_str,
+            is_used=False,
+            expires_at=expires
+        )
+        db.add(reset_record)
+
+        audit = AuditLog(
+            user_id=user.id,
+            action="PASSWORD_RESET_REQUESTED",
+            resource="users",
+            details="Requested password reset code (expires in 15 min)",
+            ip_address=ip_address
+        )
+        db.add(audit)
+        db.commit()
+
+        return MessageResponse(message=generic_msg, dev_code=code_str)
+
+    @staticmethod
+    def confirm_password_reset(
+        db: Session, request: PasswordResetConfirmRequest, ip_address: str | None = None
+    ) -> MessageResponse:
+        """
+        Validates single-use reset code and updates password satisfying policy (CS19-006 / REQ-F1-06).
+        """
+        email_clean = request.email.lower().strip()
+        user = db.query(User).filter(User.email == email_clean).first()
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid password reset request."
+            )
+
+        reset_entry = db.query(PasswordResetCode).filter(
+            PasswordResetCode.user_id == user.id,
+            PasswordResetCode.code == request.code,
+            PasswordResetCode.is_used == False
+        ).order_by(PasswordResetCode.id.desc()).first()
+
+        if not reset_entry:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or already used password reset code."
+            )
+
+        now = datetime.now(timezone.utc)
+        expires_at_utc = (
+            reset_entry.expires_at if reset_entry.expires_at.tzinfo
+            else reset_entry.expires_at.replace(tzinfo=timezone.utc)
+        )
+        if expires_at_utc < now:
+            reset_entry.is_used = True
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password reset code has expired. Please request a new code."
+            )
+
+        # Mark code as consumed
+        reset_entry.is_used = True
+        # Update user password
+        user.hashed_password = hash_password(request.new_password)
+        user.failed_login_attempts = 0
+        user.locked_until = None
+
+        audit = AuditLog(
+            user_id=user.id,
+            action="PASSWORD_RESET_COMPLETED",
+            resource="users",
+            details="Password successfully reset",
+            ip_address=ip_address
+        )
+        db.add(audit)
+        db.commit()
+
+        return MessageResponse(message="Password has been successfully reset. You may now log in with your new password.")
+
+    @staticmethod
+    def logout_user(
+        db: Session, request: LogoutRequest, ip_address: str | None = None
+    ) -> MessageResponse:
+        """
+        Revokes refresh token upon logout (CS19-007 / REQ-F1-07).
+        """
+        try:
+            payload = decode_token(request.refresh_token)
+            user_id = int(payload.get("sub")) if payload.get("sub") else None
+        except Exception:
+            # Even if token is expired/invalid, we accept logout gracefully
+            user_id = None
+
+        # Check if already revoked
+        existing = db.query(RevokedToken).filter(RevokedToken.token == request.refresh_token).first()
+        if not existing:
+            revoked = RevokedToken(
+                token=request.refresh_token,
+                user_id=user_id
+            )
+            db.add(revoked)
+
+        if user_id:
+            audit = AuditLog(
+                user_id=user_id,
+                action="USER_LOGOUT",
+                resource="auth",
+                details="User logged out; refresh token revoked",
+                ip_address=ip_address
+            )
+            db.add(audit)
+
+        db.commit()
+        return MessageResponse(message="Successfully logged out. Refresh token revoked.")

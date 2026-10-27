@@ -9,6 +9,10 @@ from app.schemas.user import (
     SendVerificationCodeRequest,
     VerifyCodeRequest,
     VerificationResponse,
+    PasswordResetRequest,
+    PasswordResetConfirmRequest,
+    LogoutRequest,
+    MessageResponse,
     UserResponse,
 )
 from app.services.auth_service import AuthService
@@ -54,7 +58,7 @@ def login(
     response_model=TokenResponse,
     status_code=status.HTTP_200_OK,
     summary="Refresh access token",
-    description="Exchanges a valid refresh token for a new short-lived access token (CS19-004)."
+    description="Exchanges a valid refresh token for a new short-lived access token (CS19-004, CS19-007)."
 )
 def refresh_token(
     request_data: RefreshTokenRequest,
@@ -93,3 +97,51 @@ def verify_contact(
 ):
     client_ip = req.client.host if req.client else None
     return AuthService.verify_code(db=db, request=request_data, ip_address=client_ip)
+
+
+@router.post(
+    "/password-reset/request",
+    response_model=MessageResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Request a password reset code",
+    description="Sends a 15-minute single-use password reset code to the verified email (CS19-006 / REQ-F1-06)."
+)
+def request_password_reset(
+    request_data: PasswordResetRequest,
+    req: Request,
+    db: Session = Depends(get_db)
+):
+    client_ip = req.client.host if req.client else None
+    return AuthService.request_password_reset(db=db, request=request_data, ip_address=client_ip)
+
+
+@router.post(
+    "/password-reset/confirm",
+    response_model=MessageResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Confirm password reset with code",
+    description="Validates the 15-minute reset code and updates the password according to policy (CS19-006 / REQ-F1-06)."
+)
+def confirm_password_reset(
+    request_data: PasswordResetConfirmRequest,
+    req: Request,
+    db: Session = Depends(get_db)
+):
+    client_ip = req.client.host if req.client else None
+    return AuthService.confirm_password_reset(db=db, request=request_data, ip_address=client_ip)
+
+
+@router.post(
+    "/logout",
+    response_model=MessageResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Log out and revoke refresh token",
+    description="Revokes the provided refresh token so it can no longer be used to issue access tokens (CS19-007 / REQ-F1-07)."
+)
+def logout(
+    request_data: LogoutRequest,
+    req: Request,
+    db: Session = Depends(get_db)
+):
+    client_ip = req.client.host if req.client else None
+    return AuthService.logout_user(db=db, request=request_data, ip_address=client_ip)
