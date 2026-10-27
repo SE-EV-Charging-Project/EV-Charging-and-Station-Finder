@@ -3,6 +3,9 @@ from app.schemas.user import (
     UserLoginRequest,
     TokenResponse,
     RefreshTokenRequest,
+    SendVerificationCodeRequest,
+    VerifyCodeRequest,
+    VerificationResponse,
     UserResponse,
 )
 
@@ -11,5 +14,8 @@ __all__ = [
     "UserLoginRequest",
     "TokenResponse",
     "RefreshTokenRequest",
+    "SendVerificationCodeRequest",
+    "VerifyCodeRequest",
+    "VerificationResponse",
     "UserResponse",
 ]

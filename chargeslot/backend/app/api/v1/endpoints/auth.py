@@ -6,6 +6,9 @@ from app.schemas.user import (
     UserLoginRequest,
     TokenResponse,
     RefreshTokenRequest,
+    SendVerificationCodeRequest,
+    VerifyCodeRequest,
+    VerificationResponse,
     UserResponse,
 )
 from app.services.auth_service import AuthService
@@ -58,3 +61,35 @@ def refresh_token(
     db: Session = Depends(get_db)
 ):
     return AuthService.refresh_access_token(db=db, refresh_token=request_data.refresh_token)
+
+
+@router.post(
+    "/verify/send-code",
+    response_model=VerificationResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Send OTP verification code",
+    description="Generates and sends a 6-digit one-time code to the user's email or phone number (CS19-003 / REQ-F1-03)."
+)
+def send_verification_code(
+    request_data: SendVerificationCodeRequest,
+    req: Request,
+    db: Session = Depends(get_db)
+):
+    client_ip = req.client.host if req.client else None
+    return AuthService.send_verification_code(db=db, request=request_data, ip_address=client_ip)
+
+
+@router.post(
+    "/verify",
+    response_model=VerificationResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Verify contact details with OTP",
+    description="Validates the 6-digit one-time code and marks the account contact details as verified (CS19-003 / REQ-F1-03)."
+)
+def verify_contact(
+    request_data: VerifyCodeRequest,
+    req: Request,
+    db: Session = Depends(get_db)
+):
+    client_ip = req.client.host if req.client else None
+    return AuthService.verify_code(db=db, request=request_data, ip_address=client_ip)
