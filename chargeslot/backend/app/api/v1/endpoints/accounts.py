@@ -32,10 +32,16 @@ from app.schemas.user import (
     ProfileValidationCheckResponse,
     ProfileValidationRulesResponse,
 )
+from app.schemas.vehicle import (
+    VehicleCreateRequest,
+    VehicleResponse,
+    VehicleListResponse,
+)
 from app.services.admin_service import AdminService
 from app.services.audit_service import AuditService
 from app.services.operator_service import OperatorService
 from app.services.profile_service import ProfileService
+from app.services.vehicle_service import VehicleService
 
 router = APIRouter(prefix="/accounts", tags=["Accounts & RBAC"])
 
@@ -553,5 +559,46 @@ def check_profile_validation(
         payload=payload,
         current_user_id=current_user.id,
     )
+
+
+# ==============================================================================
+# Vehicle Management (CS19-018 / REQ-F1-18 / REQ-F1-21 / SW Architecture Page 5)
+# ==============================================================================
+
+@router.post(
+    "/vehicle-crud",
+    response_model=VehicleResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add vehicle (architecture route)",
+    description="Matching SW Architecture Page 5: Add a new electric vehicle for the authenticated driver (REQ-F1-18 / CS19-018)."
+)
+def add_vehicle_crud(
+    payload: VehicleCreateRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VehicleResponse:
+    client_ip = request.client.host if request.client else None
+    return VehicleService.add_vehicle(
+        db=db,
+        user=current_user,
+        data=payload,
+        ip_address=client_ip,
+    )
+
+
+@router.get(
+    "/vehicle-crud",
+    response_model=VehicleListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List driver vehicles (architecture route)",
+    description="Matching SW Architecture Page 5: List all vehicles registered to the authenticated driver."
+)
+def list_vehicles_crud(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VehicleListResponse:
+    return VehicleService.list_vehicles(db=db, user=current_user)
+
 
 
