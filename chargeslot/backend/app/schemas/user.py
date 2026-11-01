@@ -296,4 +296,33 @@ class OperatorApplicationListResponse(BaseModel):
     items: list[OperatorApplicationResponse]
 
 
+# ==============================================================================
+# Operator Data Scope Schemas (CS19-012 / REQ-F1-12)
+# ==============================================================================
+
+class OperatorDataScopeResponse(BaseModel):
+    operator_id: int
+    operator_name: str
+    operator_email: str
+    operator_organization: str | None = None
+    role: str
+    scope_type: str  # "OWNED_RESOURCES_ONLY" | "GLOBAL"
+    allowed_resources: list[str] = ["stations", "chargers", "tariffs", "reports"]
+    message: str
+
+
+class VerifyOperatorAccessRequest(BaseModel):
+    resource_operator_id: int = Field(..., description="Operator ID associated with the target resource")
+    resource_type: str = Field(default="station", description="Type of resource: station, charger, tariff, report")
+
+
+class VerifyOperatorAccessResponse(BaseModel):
+    has_access: bool
+    operator_id: int
+    resource_operator_id: int
+    resource_type: str
+    message: str
+
+
+
 

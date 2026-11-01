@@ -9,6 +9,7 @@ from app.api.deps import (
     require_operator,
     require_driver,
 )
+from app.core.permissions import enforce_operator_scope
 from app.db.session import get_db
 from app.models.user import User, UserRole
 from app.models.operator_application import ApplicationStatus
@@ -22,6 +23,9 @@ from app.schemas.user import (
     OperatorApplicationResponse,
     OperatorApplicationListResponse,
     OperatorApplicationRejectRequest,
+    OperatorDataScopeResponse,
+    VerifyOperatorAccessRequest,
+    VerifyOperatorAccessResponse,
 )
 from app.services.admin_service import AdminService
 from app.services.audit_service import AuditService
@@ -410,5 +414,53 @@ def reject_operator_onboarding(
         reviewed_at=app.reviewed_at,
         created_at=app.created_at,
         updated_at=app.updated_at,
+    )
+
+
+# ==============================================================================
+# Operator Data Scope (CS19-012 / REQ-F1-12 / SW Architecture Page 5)
+# ==============================================================================
+
+@router.get(
+    "/operator-data-scope",
+    response_model=OperatorDataScopeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Operator data scope profile",
+    description="Proposed route GET /api/v1/accounts/operator-data-scope matching SW Architecture Page 5 (REQ-F1-12 / CS19-012). Restricted to Station Operators and Admins."
+)
+def get_operator_data_scope(
+    current_user: User = Depends(require_operator),
+) -> OperatorDataScopeResponse:
+    is_admin = current_user.role == UserRole.ADMIN
+    return OperatorDataScopeResponse(
+        operator_id=current_user.id,
+        operator_name=current_user.name,
+        operator_email=current_user.email,
+        operator_organization=current_user.operator_organization,
+        role=current_user.role.value if isinstance(current_user.role, UserRole) else str(current_user.role),
+        scope_type="GLOBAL" if is_admin else "OWNED_RESOURCES_ONLY",
+        allowed_resources=["stations", "chargers", "tariffs", "reports"],
+        message="Global operator management scope granted." if is_admin else "Scoped strictly to owned stations, chargers, tariffs, and reports (REQ-F1-12)."
+    )
+
+
+@router.post(
+    "/operator-data-scope/verify-access",
+    response_model=VerifyOperatorAccessResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Verify operator access to a resource",
+    description="Checks whether the authenticated operator is authorized to access a given station, charger, tariff, or report (REQ-F1-12 / CS19-012)."
+)
+def verify_operator_access(
+    payload: VerifyOperatorAccessRequest,
+    current_user: User = Depends(require_operator),
+) -> VerifyOperatorAccessResponse:
+    enforce_operator_scope(current_user=current_user, resource_operator_id=payload.resource_operator_id)
+    return VerifyOperatorAccessResponse(
+        has_access=True,
+        operator_id=current_user.id,
+        resource_operator_id=payload.resource_operator_id,
+        resource_type=payload.resource_type,
+        message="Access authorized: Operator owns this resource (or holds Administrator global scope)."
     )
 
