@@ -2,6 +2,7 @@ import re
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from app.models.user import UserRole
+from app.models.operator_application import ApplicationStatus
 from app.utils.security import validate_password_policy
 
 
@@ -202,5 +203,97 @@ class AdminUserListResponse(BaseModel):
     page: int
     page_size: int
     items: list[UserResponse]
+
+
+# ==============================================================================
+# Audit Log Schemas (CS19-014 / REQ-F1-14)
+# ==============================================================================
+
+class AuditLogResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int | None
+    user_email: str | None = None
+    action: str
+    resource: str | None
+    details: str | None
+    ip_address: str | None
+    timestamp: datetime
+
+
+class AuditLogListResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: list[AuditLogResponse]
+
+
+# ==============================================================================
+# Operator Onboarding Schemas (CS19-015 / REQ-F1-15)
+# ==============================================================================
+
+class OperatorApplicationCreate(BaseModel):
+    business_name: str = Field(..., min_length=2, max_length=200, description="Registered business or legal operator name")
+    contact_email: EmailStr = Field(..., description="Business contact email")
+    contact_phone: str = Field(..., description="Business contact phone number")
+    business_address: str | None = Field(default=None, max_length=500, description="Business or headquarters address")
+    tax_identifier: str | None = Field(default=None, max_length=100, description="Business tax ID / GSTIN / CIN")
+
+    @field_validator("business_name")
+    @classmethod
+    def validate_business_name(cls, v: str) -> str:
+        trimmed = v.strip()
+        if len(trimmed) < 2:
+            raise ValueError("Business name must be at least 2 characters long.")
+        return trimmed
+
+    @field_validator("contact_phone")
+    @classmethod
+    def validate_contact_phone(cls, v: str) -> str:
+        cleaned = re.sub(r"[\s\-()]", "", v)
+        if not re.match(r"^\+?[0-9]{10,15}$", cleaned):
+            raise ValueError("Contact phone number must contain 10 to 15 digits, optionally preceded by '+'.")
+        return cleaned
+
+
+class OperatorApplicationRejectRequest(BaseModel):
+    reason: str = Field(..., min_length=5, max_length=1000, description="Reason for rejecting the operator application")
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, v: str) -> str:
+        trimmed = v.strip()
+        if len(trimmed) < 5:
+            raise ValueError("Rejection reason must be at least 5 characters long.")
+        return trimmed
+
+
+class OperatorApplicationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    applicant_name: str | None = None
+    applicant_email: str | None = None
+    business_name: str
+    contact_email: str
+    contact_phone: str
+    business_address: str | None = None
+    tax_identifier: str | None = None
+    status: ApplicationStatus
+    rejection_reason: str | None = None
+    reviewed_by_admin_id: int | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class OperatorApplicationListResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    items: list[OperatorApplicationResponse]
+
 
 

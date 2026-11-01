@@ -46,3 +46,9 @@ class User(Base):
     verification_codes = relationship("VerificationCode", back_populates="user", cascade="all, delete-orphan")
     password_reset_codes = relationship("PasswordResetCode", back_populates="user", cascade="all, delete-orphan")
     revoked_tokens = relationship("RevokedToken", back_populates="user", cascade="all, delete-orphan")
+    operator_applications = relationship(
+        "OperatorApplication",
+        foreign_keys="OperatorApplication.user_id",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
