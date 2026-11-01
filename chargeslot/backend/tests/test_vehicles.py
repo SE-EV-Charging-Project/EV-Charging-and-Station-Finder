@@ -808,3 +808,444 @@ def test_vehicle_summary_card_not_found(client: TestClient, driver_user: User):
     )
     assert resp.status_code == 404
 
+
+# ==============================================================================
+# CS19-021 / REQ-F1-21: Edit or Remove Vehicle
+# ==============================================================================
+
+def test_edit_vehicle_success(client: TestClient, db_session: Session, driver_user: User):
+    """TC-F1-21-01 / STC-F1-21-01: Driver successfully updates vehicle attributes."""
+    token = make_token(driver_user)
+    create_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Lucid",
+            "model": "Air Pure",
+            "battery_kwh": 88.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 19.2,
+            "max_dc_kw": 250.0,
+            "consumption_kwh_100km": 14.5,
+            "registration_no": "KA01EV1111",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    veh_id = create_resp.json()["id"]
+
+    update_payload = {
+        "model": "Air Touring",
+        "battery_kwh": 92.0,
+        "max_dc_kw": 300.0,
+        "consumption_kwh_100km": 15.0,
+        "registration_no": "KA01EV2222",
+    }
+    resp = client.patch(
+        f"/api/v1/vehicles/{veh_id}",
+        json=update_payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["model"] == "Air Touring"
+    assert data["battery_kwh"] == 92.0
+    assert data["max_dc_kw"] == 300.0
+    assert data["consumption_kwh_100km"] == 15.0
+    assert data["registration_no"] == "KA01EV2222"
+
+    # Verify DB persistence
+    veh = db_session.query(Vehicle).filter(Vehicle.id == veh_id).first()
+    assert veh.model == "Air Touring"
+    assert veh.battery_kwh == 92.0
+
+
+def test_edit_vehicle_architecture_route(client: TestClient, driver_user: User):
+    """TC-F1-21-02: Verifies SW Architecture route PATCH /api/v1/accounts/vehicle-crud/{id}."""
+    token = make_token(driver_user)
+    create_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Ford",
+            "model": "Mustang Mach-E",
+            "battery_kwh": 75.7,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 150.0,
+            "consumption_kwh_100km": 18.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    veh_id = create_resp.json()["id"]
+
+    resp = client.patch(
+        f"/api/v1/accounts/vehicle-crud/{veh_id}",
+        json={"max_dc_kw": 190.0},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["max_dc_kw"] == 190.0
+
+
+def test_edit_vehicle_default_reassignment(client: TestClient, driver_user: User):
+    """TC-F1-21-03: Setting is_default=True on a second vehicle automatically unsets it on the first."""
+    token = make_token(driver_user)
+    # First vehicle (automatically default)
+    resp1 = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Tesla",
+            "model": "Model S",
+            "battery_kwh": 100.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 250.0,
+            "consumption_kwh_100km": 18.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    id1 = resp1.json()["id"]
+    assert resp1.json()["is_default"] is True
+
+    # Second vehicle (not default)
+    resp2 = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Tesla",
+            "model": "Model X",
+            "battery_kwh": 100.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 250.0,
+            "consumption_kwh_100km": 20.0,
+            "is_default": False,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    id2 = resp2.json()["id"]
+    assert resp2.json()["is_default"] is False
+
+    # Update second vehicle to default
+    update_resp = client.patch(
+        f"/api/v1/vehicles/{id2}",
+        json={"is_default": True},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert update_resp.status_code == 200
+    assert update_resp.json()["is_default"] is True
+
+    # Check that first vehicle is no longer default
+    get1_resp = client.get(
+        f"/api/v1/vehicles/{id1}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert get1_resp.json()["is_default"] is False
+
+
+def test_edit_vehicle_creates_audit_log(
+    client: TestClient, db_session: Session, driver_user: User
+):
+    """TC-F1-21-04: Verifies editing a vehicle creates an audit log entry."""
+    token = make_token(driver_user)
+    create_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Kia",
+            "model": "Niro EV",
+            "battery_kwh": 64.8,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 84.0,
+            "consumption_kwh_100km": 16.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    veh_id = create_resp.json()["id"]
+
+    client.patch(
+        f"/api/v1/vehicles/{veh_id}",
+        json={"max_dc_kw": 100.0},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    audit_entry = (
+        db_session.query(AuditLog)
+        .filter(
+            AuditLog.user_id == driver_user.id,
+            AuditLog.action == "VEHICLE_UPDATED",
+        )
+        .order_by(AuditLog.id.desc())
+        .first()
+    )
+    assert audit_entry is not None
+    assert "max_dc_kw" in audit_entry.details
+
+
+def test_edit_vehicle_validation_errors(client: TestClient, driver_user: User):
+    """TC-F1-21-05: Rejects invalid attribute updates with 422."""
+    token = make_token(driver_user)
+    create_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "BMW",
+            "model": "iX3",
+            "battery_kwh": 74.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 150.0,
+            "consumption_kwh_100km": 18.5,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    veh_id = create_resp.json()["id"]
+
+    # Invalid battery capacity (> 250)
+    resp = client.patch(
+        f"/api/v1/vehicles/{veh_id}",
+        json={"battery_kwh": 300.0},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+
+    # Invalid max_dc_kw (between 0 and 10)
+    resp = client.patch(
+        f"/api/v1/vehicles/{veh_id}",
+        json={"max_dc_kw": 5.0},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+
+    # Blank make
+    resp = client.patch(
+        f"/api/v1/vehicles/{veh_id}",
+        json={"make": "   "},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+
+
+def test_edit_vehicle_driver_isolation(
+    client: TestClient, driver_user: User, other_driver: User
+):
+    """TC-F1-21-06: Driver B cannot edit Driver A's vehicle (REQ-F1-26)."""
+    driver_a_token = make_token(driver_user)
+    create_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Genesis",
+            "model": "GV60",
+            "battery_kwh": 77.4,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 235.0,
+            "consumption_kwh_100km": 19.0,
+        },
+        headers={"Authorization": f"Bearer {driver_a_token}"},
+    )
+    veh_id = create_resp.json()["id"]
+
+    driver_b_token = make_token(other_driver)
+    resp = client.patch(
+        f"/api/v1/vehicles/{veh_id}",
+        json={"model": "GV70 Electrified"},
+        headers={"Authorization": f"Bearer {driver_b_token}"},
+    )
+    assert resp.status_code == 403
+    assert "access denied" in resp.json()["detail"].lower()
+
+
+def test_edit_vehicle_not_found(client: TestClient, driver_user: User):
+    """TC-F1-21-07: Updating non-existent vehicle returns 404."""
+    token = make_token(driver_user)
+    resp = client.patch(
+        "/api/v1/vehicles/999999",
+        json={"model": "Ghost EV"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 404
+
+
+def test_remove_vehicle_success(
+    client: TestClient, db_session: Session, driver_user: User
+):
+    """TC-F1-21-08 / STC-F1-21-02: Driver removes vehicle via DELETE /api/v1/vehicles/{id}."""
+    token = make_token(driver_user)
+    create_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Fiat",
+            "model": "500e",
+            "battery_kwh": 42.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 85.0,
+            "consumption_kwh_100km": 14.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    veh_id = create_resp.json()["id"]
+
+    del_resp = client.delete(
+        f"/api/v1/vehicles/{veh_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert del_resp.status_code == 200
+    data = del_resp.json()
+    assert data["status"] == "success"
+    assert data["vehicle_id"] == veh_id
+
+    # Verify vehicle is deleted from database
+    veh_in_db = db_session.query(Vehicle).filter(Vehicle.id == veh_id).first()
+    assert veh_in_db is None
+
+
+def test_remove_vehicle_architecture_route(client: TestClient, driver_user: User):
+    """TC-F1-21-09: Verifies SW Architecture route DELETE /api/v1/accounts/vehicle-crud/{id}."""
+    token = make_token(driver_user)
+    create_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Mini",
+            "model": "Cooper SE",
+            "battery_kwh": 32.6,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 50.0,
+            "consumption_kwh_100km": 15.2,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    veh_id = create_resp.json()["id"]
+
+    del_resp = client.delete(
+        f"/api/v1/accounts/vehicle-crud/{veh_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert del_resp.status_code == 200
+    assert del_resp.json()["status"] == "success"
+
+
+def test_remove_vehicle_default_fallback(client: TestClient, driver_user: User):
+    """TC-F1-21-10: Deleting default vehicle reassigns default status to remaining vehicle."""
+    token = make_token(driver_user)
+    # Add vehicle 1 (default)
+    resp1 = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Jaguar",
+            "model": "I-Pace",
+            "battery_kwh": 90.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 100.0,
+            "consumption_kwh_100km": 22.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    id1 = resp1.json()["id"]
+
+    # Add vehicle 2
+    resp2 = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Mercedes",
+            "model": "EQE",
+            "battery_kwh": 90.6,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 170.0,
+            "consumption_kwh_100km": 18.5,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    id2 = resp2.json()["id"]
+
+    # Delete vehicle 1
+    client.delete(
+        f"/api/v1/vehicles/{id1}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    # Vehicle 2 must now be default
+    get2 = client.get(
+        f"/api/v1/vehicles/{id2}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert get2.json()["is_default"] is True
+
+
+def test_remove_vehicle_creates_audit_log(
+    client: TestClient, db_session: Session, driver_user: User
+):
+    """TC-F1-21-11: Verifies removing a vehicle creates a VEHICLE_DELETED audit log entry."""
+    token = make_token(driver_user)
+    create_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Skoda",
+            "model": "Enyaq iV",
+            "battery_kwh": 77.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 135.0,
+            "consumption_kwh_100km": 17.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    veh_id = create_resp.json()["id"]
+
+    client.delete(
+        f"/api/v1/vehicles/{veh_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    audit_entry = (
+        db_session.query(AuditLog)
+        .filter(
+            AuditLog.user_id == driver_user.id,
+            AuditLog.action == "VEHICLE_DELETED",
+        )
+        .order_by(AuditLog.id.desc())
+        .first()
+    )
+    assert audit_entry is not None
+    assert "Enyaq" in audit_entry.details
+
+
+def test_remove_vehicle_driver_isolation(
+    client: TestClient, driver_user: User, other_driver: User
+):
+    """TC-F1-21-12: Driver B cannot delete Driver A's vehicle (REQ-F1-26)."""
+    driver_a_token = make_token(driver_user)
+    create_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Volkswagen",
+            "model": "ID.4",
+            "battery_kwh": 77.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 135.0,
+            "consumption_kwh_100km": 17.5,
+        },
+        headers={"Authorization": f"Bearer {driver_a_token}"},
+    )
+    veh_id = create_resp.json()["id"]
+
+    driver_b_token = make_token(other_driver)
+    resp = client.delete(
+        f"/api/v1/vehicles/{veh_id}",
+        headers={"Authorization": f"Bearer {driver_b_token}"},
+    )
+    assert resp.status_code == 403
+    assert "access denied" in resp.json()["detail"].lower()
+
+
+def test_remove_vehicle_not_found(client: TestClient, driver_user: User):
+    """TC-F1-21-13: Deleting non-existent vehicle returns 404."""
+    token = make_token(driver_user)
+    resp = client.delete(
+        "/api/v1/vehicles/999999",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 404
+
+

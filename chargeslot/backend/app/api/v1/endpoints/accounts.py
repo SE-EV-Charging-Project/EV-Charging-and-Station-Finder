@@ -34,8 +34,10 @@ from app.schemas.user import (
 )
 from app.schemas.vehicle import (
     VehicleCreateRequest,
+    VehicleUpdateRequest,
     VehicleResponse,
     VehicleListResponse,
+    VehicleDeleteResponse,
     VehicleValidationRulesResponse,
     VehicleValidationCheckRequest,
     VehicleValidationCheckResponse,
@@ -604,6 +606,53 @@ def list_vehicles_crud(
     db: Session = Depends(get_db),
 ) -> VehicleListResponse:
     return VehicleService.list_vehicles(db=db, user=current_user)
+
+
+@router.patch(
+    "/vehicle-crud/{vehicle_id}",
+    response_model=VehicleResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Edit vehicle (architecture route)",
+    description="Matching SW Architecture Page 5: Edit vehicle specifications (REQ-F1-21 / CS19-021)."
+)
+def update_vehicle_crud(
+    vehicle_id: int,
+    payload: VehicleUpdateRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VehicleResponse:
+    client_ip = request.client.host if request.client else None
+    return VehicleService.update_vehicle(
+        db=db,
+        vehicle_id=vehicle_id,
+        user=current_user,
+        data=payload,
+        ip_address=client_ip,
+    )
+
+
+@router.delete(
+    "/vehicle-crud/{vehicle_id}",
+    response_model=VehicleDeleteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Remove vehicle (architecture route)",
+    description="Matching SW Architecture Page 5: Remove a vehicle from driver's profile (REQ-F1-21 / CS19-021)."
+)
+def remove_vehicle_crud(
+    vehicle_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VehicleDeleteResponse:
+    client_ip = request.client.host if request.client else None
+    return VehicleService.remove_vehicle(
+        db=db,
+        vehicle_id=vehicle_id,
+        user=current_user,
+        ip_address=client_ip,
+    )
+
 
 
 @router.get(

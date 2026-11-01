@@ -5,8 +5,10 @@ from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle, ConnectorType
 from app.schemas.vehicle import (
     VehicleCreateRequest,
+    VehicleUpdateRequest,
     VehicleResponse,
     VehicleListResponse,
+    VehicleDeleteResponse,
     VehicleValidationRulesResponse,
     VehicleValidationCheckRequest,
     VehicleValidationCheckResponse,
@@ -119,6 +121,165 @@ class VehicleService:
                 detail="Access denied: You do not have permission to access this vehicle (REQ-F1-26).",
             )
         return vehicle
+
+    @staticmethod
+    def update_vehicle(
+        db: Session,
+        vehicle_id: int,
+        user: User,
+        data: VehicleUpdateRequest,
+        ip_address: str | None = None,
+    ) -> VehicleResponse:
+        """
+        Update specifications or details of an existing vehicle (CS19-021 / REQ-F1-21).
+        Enforces driver ownership, validates bounds, handles default reassignment, and logs audit events.
+        """
+        vehicle = VehicleService.get_vehicle_by_id(db=db, vehicle_id=vehicle_id, user=user)
+        changes: list[str] = []
+
+        if data.make is not None:
+            trimmed_make = data.make.strip()
+            if not trimmed_make:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Vehicle make cannot be empty or whitespace.",
+                )
+            if vehicle.make != trimmed_make:
+                changes.append(f"make: '{vehicle.make}' -> '{trimmed_make}'")
+                vehicle.make = trimmed_make
+
+        if data.model is not None:
+            trimmed_model = data.model.strip()
+            if not trimmed_model:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Vehicle model cannot be empty or whitespace.",
+                )
+            if vehicle.model != trimmed_model:
+                changes.append(f"model: '{vehicle.model}' -> '{trimmed_model}'")
+                vehicle.model = trimmed_model
+
+        if data.battery_kwh is not None:
+            if data.battery_kwh < 5.0 or data.battery_kwh > 250.0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Battery capacity must be between 5.0 and 250.0 kWh (Appendix B.3).",
+                )
+            if vehicle.battery_kwh != data.battery_kwh:
+                changes.append(f"battery_kwh: {vehicle.battery_kwh} -> {data.battery_kwh}")
+                vehicle.battery_kwh = data.battery_kwh
+
+        if data.connector_type is not None:
+            if vehicle.connector_type != data.connector_type:
+                changes.append(f"connector_type: '{vehicle.connector_type.value}' -> '{data.connector_type.value}'")
+                vehicle.connector_type = data.connector_type
+
+        if data.max_ac_kw is not None:
+            if data.max_ac_kw < 1.0 or data.max_ac_kw > 50.0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Maximum AC charging rate must be between 1.0 and 50.0 kW (Appendix B.3).",
+                )
+            if vehicle.max_ac_kw != data.max_ac_kw:
+                changes.append(f"max_ac_kw: {vehicle.max_ac_kw} -> {data.max_ac_kw}")
+                vehicle.max_ac_kw = data.max_ac_kw
+
+        if data.max_dc_kw is not None:
+            if data.max_dc_kw < 0.0 or (0.0 < data.max_dc_kw < 10.0) or data.max_dc_kw > 400.0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Maximum DC charging rate must be 0 kW (unsupported) or between 10.0 and 400.0 kW (Appendix B.3).",
+                )
+            if vehicle.max_dc_kw != data.max_dc_kw:
+                changes.append(f"max_dc_kw: {vehicle.max_dc_kw} -> {data.max_dc_kw}")
+                vehicle.max_dc_kw = data.max_dc_kw
+
+        if data.consumption_kwh_100km is not None:
+            if data.consumption_kwh_100km < 5.0 or data.consumption_kwh_100km > 50.0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Energy consumption must be between 5.0 and 50.0 kWh per 100 km (Appendix B.3).",
+                )
+            if vehicle.consumption_kwh_100km != data.consumption_kwh_100km:
+                changes.append(f"consumption: {vehicle.consumption_kwh_100km} -> {data.consumption_kwh_100km}")
+                vehicle.consumption_kwh_100km = data.consumption_kwh_100km
+
+        if data.registration_no is not None:
+            trimmed_reg = data.registration_no.strip().upper() if data.registration_no else None
+            if vehicle.registration_no != trimmed_reg:
+                changes.append(f"registration_no: '{vehicle.registration_no}' -> '{trimmed_reg}'")
+                vehicle.registration_no = trimmed_reg
+
+        if data.is_default is not None:
+            if data.is_default is True and not vehicle.is_default:
+                # Unset existing default vehicle for this user
+                db.query(Vehicle).filter(Vehicle.user_id == user.id, Vehicle.id != vehicle.id).update({"is_default": False})
+                vehicle.is_default = True
+                changes.append("is_default: False -> True")
+            elif data.is_default is False and vehicle.is_default:
+                vehicle.is_default = False
+                changes.append("is_default: True -> False")
+
+        if changes:
+            AuditService.log_action(
+                db=db,
+                user_id=user.id,
+                action="VEHICLE_UPDATED",
+                resource=f"vehicle:{vehicle.id}",
+                details=f"Updated vehicle {vehicle.make} {vehicle.model}: {'; '.join(changes)}",
+                ip_address=ip_address,
+                commit=False,
+            )
+
+        db.commit()
+        db.refresh(vehicle)
+        return VehicleResponse.model_validate(vehicle)
+
+    @staticmethod
+    def remove_vehicle(
+        db: Session,
+        vehicle_id: int,
+        user: User,
+        ip_address: str | None = None,
+    ) -> VehicleDeleteResponse:
+        """
+        Remove/delete a vehicle owned by the authenticated driver (CS19-021 / REQ-F1-21).
+        Enforces driver ownership, handles fallback default assignment, and logs audit events.
+        """
+        vehicle = VehicleService.get_vehicle_by_id(db=db, vehicle_id=vehicle_id, user=user)
+        was_default = vehicle.is_default
+        veh_info = f"{vehicle.make} {vehicle.model} (ID: {vehicle.id})"
+
+        db.delete(vehicle)
+        db.flush()
+
+        # If deleted vehicle was default, set the most recent remaining vehicle as default
+        if was_default:
+            remaining = (
+                db.query(Vehicle)
+                .filter(Vehicle.user_id == user.id)
+                .order_by(Vehicle.created_at.desc())
+                .first()
+            )
+            if remaining:
+                remaining.is_default = True
+
+        AuditService.log_action(
+            db=db,
+            user_id=user.id,
+            action="VEHICLE_DELETED",
+            resource=f"vehicle:{vehicle_id}",
+            details=f"Deleted vehicle {veh_info}",
+            ip_address=ip_address,
+            commit=False,
+        )
+
+        db.commit()
+        return VehicleDeleteResponse(
+            message=f"Vehicle '{veh_info}' has been successfully removed.",
+            vehicle_id=vehicle_id,
+            status="success",
+        )
 
     @staticmethod
     def get_validation_rules() -> VehicleValidationRulesResponse:
