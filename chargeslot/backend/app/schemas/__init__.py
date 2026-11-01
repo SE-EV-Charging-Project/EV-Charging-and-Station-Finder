@@ -13,6 +13,12 @@ from app.schemas.user import (
     UserResponse,
 )
 
+from app.schemas.vehicle import (
+    VehicleCreateRequest,
+    VehicleResponse,
+    VehicleListResponse,
+)
+
 __all__ = [
     "UserRegisterRequest",
     "UserLoginRequest",
@@ -26,4 +32,7 @@ __all__ = [
     "LogoutRequest",
     "MessageResponse",
     "UserResponse",
+    "VehicleCreateRequest",
+    "VehicleResponse",
+    "VehicleListResponse",
 ]
