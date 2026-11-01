@@ -26,10 +26,16 @@ from app.schemas.user import (
     OperatorDataScopeResponse,
     VerifyOperatorAccessRequest,
     VerifyOperatorAccessResponse,
+    ProfilePreferencesResponse,
+    ProfilePreferencesUpdateRequest,
+    ProfileValidationCheckRequest,
+    ProfileValidationCheckResponse,
+    ProfileValidationRulesResponse,
 )
 from app.services.admin_service import AdminService
 from app.services.audit_service import AuditService
 from app.services.operator_service import OperatorService
+from app.services.profile_service import ProfileService
 
 router = APIRouter(prefix="/accounts", tags=["Accounts & RBAC"])
 
@@ -463,4 +469,89 @@ def verify_operator_access(
         resource_type=payload.resource_type,
         message="Access authorized: Operator owns this resource (or holds Administrator global scope)."
     )
+
+
+# ==============================================================================
+# Driver Profile & Preferences (CS19-016 / CS19-017 / REQ-F1-16 / REQ-F1-17 / SW Architecture Page 5)
+# ==============================================================================
+
+@router.get(
+    "/profile",
+    response_model=ProfilePreferencesResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get user profile and preferences",
+    description="Fetch profile information and charging preferences for the currently authenticated user (CS19-016 / REQ-F1-16)."
+)
+def get_user_profile(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProfilePreferencesResponse:
+    return ProfileService.get_profile(db=db, user=current_user)
+
+
+@router.get(
+    "/edit-profile-and-preferences",
+    response_model=ProfilePreferencesResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get profile and preferences (architecture alias)",
+    description="Matching SW Architecture Page 5: Retrieve driver profile and preferences before editing."
+)
+def get_profile_and_preferences(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProfilePreferencesResponse:
+    return ProfileService.get_profile(db=db, user=current_user)
+
+
+@router.patch(
+    "/edit-profile-and-preferences",
+    response_model=ProfilePreferencesResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Edit driver profile and preferences",
+    description="Matching SW Architecture Page 5: Update driver profile information and charging preferences (CS19-016 / REQ-F1-16)."
+)
+def edit_profile_and_preferences(
+    payload: ProfilePreferencesUpdateRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProfilePreferencesResponse:
+    client_ip = request.client.host if request.client else None
+    return ProfileService.edit_profile(
+        db=db,
+        user=current_user,
+        data=payload,
+        ip_address=client_ip,
+    )
+
+
+@router.get(
+    "/profile-validation",
+    response_model=ProfileValidationRulesResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get profile validation rules",
+    description="Matching SW Architecture Page 5: Validate profile inputs and return validation rules metadata (CS19-017 / REQ-F1-17)."
+)
+def get_profile_validation_rules() -> ProfileValidationRulesResponse:
+    return ProfileService.get_validation_rules()
+
+
+@router.post(
+    "/profile-validation",
+    response_model=ProfileValidationCheckResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Inline profile validation check",
+    description="Validates draft profile inputs and returns inline field-level validation feedback (CS19-017 / REQ-F1-17)."
+)
+def check_profile_validation(
+    payload: ProfileValidationCheckRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProfileValidationCheckResponse:
+    return ProfileService.validate_profile_inputs(
+        db=db,
+        payload=payload,
+        current_user_id=current_user.id,
+    )
+
 

@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
-from app.models.user import UserRole
+from app.models.user import UserRole, ChargingMode
 from app.models.operator_application import ApplicationStatus
 from app.utils.security import validate_password_policy
 
@@ -322,6 +322,83 @@ class VerifyOperatorAccessResponse(BaseModel):
     resource_operator_id: int
     resource_type: str
     message: str
+
+
+# ==============================================================================
+# Driver Profile & Preferences Schemas (CS19-016 / CS19-017 / REQ-F1-16 / REQ-F1-17)
+# ==============================================================================
+
+class ProfilePreferencesResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    email: str
+    phone: str
+    role: UserRole
+    operator_organization: str | None = None
+    default_charging_mode: ChargingMode
+    default_target_battery: int
+    low_battery_threshold: int
+    default_search_radius: int
+    notify_email: bool
+    notify_sms: bool
+    notify_push: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProfilePreferencesUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=100, description="User full name")
+    phone: str | None = Field(default=None, description="Contact phone number with optional country code")
+    default_charging_mode: ChargingMode | None = Field(default=None, description="Preferred charging mode: Fastest, Cheapest, Nearest")
+    default_target_battery: int | None = Field(default=None, ge=50, le=100, description="Target battery percentage (50-100%)")
+    low_battery_threshold: int | None = Field(default=None, ge=10, le=30, description="Low battery warning threshold (10-30%)")
+    default_search_radius: int | None = Field(default=None, ge=1, le=50, description="Default station search radius in km (1-50 km)")
+    notify_email: bool | None = Field(default=None, description="Receive email notifications")
+    notify_sms: bool | None = Field(default=None, description="Receive SMS notifications")
+    notify_push: bool | None = Field(default=None, description="Receive push notifications")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        trimmed = v.strip()
+        if len(trimmed) < 2:
+            raise ValueError("Name must be at least 2 characters long and cannot be blank.")
+        return trimmed
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = re.sub(r"[\s\-()]", "", v)
+        if not re.match(r"^\+?[0-9]{10,15}$", cleaned):
+            raise ValueError("Phone number must contain 10 to 15 digits, optionally preceded by '+'.")
+        return cleaned
+
+
+class ProfileValidationCheckRequest(BaseModel):
+    name: str | None = None
+    phone: str | None = None
+    default_charging_mode: str | None = None
+    default_target_battery: int | None = None
+    low_battery_threshold: int | None = None
+    default_search_radius: int | None = None
+
+
+class ProfileValidationCheckResponse(BaseModel):
+    is_valid: bool
+    errors: dict[str, str] = {}
+    message: str
+
+
+class ProfileValidationRulesResponse(BaseModel):
+    rules: dict[str, dict]
+    status: str = "success"
+
 
 
 
