@@ -17,6 +17,11 @@ from app.schemas.vehicle import (
     VehicleCreateRequest,
     VehicleResponse,
     VehicleListResponse,
+    VehicleValidationRulesResponse,
+    VehicleValidationCheckRequest,
+    VehicleValidationCheckResponse,
+    VehicleSummaryCardResponse,
+    VehicleSummaryCardListResponse,
 )
 
 __all__ = [
@@ -35,4 +40,9 @@ __all__ = [
     "VehicleCreateRequest",
     "VehicleResponse",
     "VehicleListResponse",
+    "VehicleValidationRulesResponse",
+    "VehicleValidationCheckRequest",
+    "VehicleValidationCheckResponse",
+    "VehicleSummaryCardResponse",
+    "VehicleSummaryCardListResponse",
 ]

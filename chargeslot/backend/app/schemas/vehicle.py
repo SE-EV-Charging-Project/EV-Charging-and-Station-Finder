@@ -1,3 +1,4 @@
+from typing import Any
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.models.vehicle import ConnectorType
@@ -67,3 +68,61 @@ class VehicleResponse(BaseModel):
 class VehicleListResponse(BaseModel):
     total: int
     items: list[VehicleResponse]
+
+
+# ==============================================================================
+# Vehicle Validation Schemas (CS19-019 / REQ-F1-19 / REQ-F1-24)
+# ==============================================================================
+
+class VehicleValidationRulesResponse(BaseModel):
+    rules: dict[str, Any]
+    status: str = "success"
+
+
+class VehicleValidationCheckRequest(BaseModel):
+    make: str | None = None
+    model: str | None = None
+    battery_kwh: float | None = None
+    connector_type: str | None = None
+    max_ac_kw: float | None = None
+    max_dc_kw: float | None = None
+    consumption_kwh_100km: float | None = None
+    registration_no: str | None = None
+
+
+class VehicleValidationCheckResponse(BaseModel):
+    is_valid: bool
+    errors: dict[str, str] = {}
+    message: str
+
+
+# ==============================================================================
+# Vehicle Summary Card Schemas (CS19-020 / REQ-F1-20)
+# ==============================================================================
+
+class VehicleSummaryCardResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    vehicle_id: int
+    user_id: int
+    make: str
+    model: str
+    display_title: str
+    registration_no: str | None = None
+    is_default: bool
+    battery_kwh: float
+    connector_type: ConnectorType
+    connector_icon: str
+    current_type: str
+    max_ac_kw: float
+    max_dc_kw: float
+    fast_charging_support: bool
+    consumption_kwh_100km: float
+    estimated_range_km: float
+    usable_range_km: float
+    compatibility_badges: list[str]
+
+
+class VehicleSummaryCardListResponse(BaseModel):
+    total: int
+    items: list[VehicleSummaryCardResponse]
