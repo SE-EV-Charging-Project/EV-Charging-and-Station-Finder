@@ -11,6 +11,12 @@ class UserRole(str, enum.Enum):
     ADMIN = "admin"
 
 
+class ChargingMode(str, enum.Enum):
+    FASTEST = "Fastest"
+    CHEAPEST = "Cheapest"
+    NEAREST = "Nearest"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -29,6 +35,19 @@ class User(Base):
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     operator_organization: Mapped[str | None] = mapped_column(String(150), nullable=True)
+
+    # Driver Preferences (REQ-F1-16 / Appendix B.1, B.2)
+    default_charging_mode: Mapped[ChargingMode] = mapped_column(
+        Enum(ChargingMode, name="charging_mode_enum", native_enum=False),
+        default=ChargingMode.FASTEST,
+        nullable=False
+    )
+    default_target_battery: Mapped[int] = mapped_column(Integer, default=80, nullable=False)
+    low_battery_threshold: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+    default_search_radius: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    notify_email: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notify_sms: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notify_push: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
