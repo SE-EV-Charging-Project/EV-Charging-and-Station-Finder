@@ -1249,3 +1249,325 @@ def test_remove_vehicle_not_found(client: TestClient, driver_user: User):
     assert resp.status_code == 404
 
 
+# ==============================================================================
+# CS19-022 / REQ-F1-22: Max 5 Vehicles Rule & Exactly One Default Vehicle
+# ==============================================================================
+
+def test_get_vehicle_limit_and_default_empty(client: TestClient, driver_user: User):
+    """TC-F1-22-01 / STC-F1-22-01: Verifies vehicle limit info when driver has 0 vehicles."""
+    token = make_token(driver_user)
+    # REST route
+    resp = client.get(
+        "/api/v1/vehicles/limit-and-default",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["max_vehicles_allowed"] == 5
+    assert data["current_vehicle_count"] == 0
+    assert data["can_add_more"] is True
+    assert data["default_vehicle_id"] is None
+    assert data["default_vehicle"] is None
+
+    # Architecture route
+    resp_arch = client.get(
+        "/api/v1/accounts/vehicle-limit-and-default",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_arch.status_code == 200
+    assert resp_arch.json()["max_vehicles_allowed"] == 5
+
+
+def test_first_vehicle_becomes_default_and_get_default_endpoint(client: TestClient, driver_user: User):
+    """TC-F1-22-02: Verifies first added vehicle is automatically default and retrievable."""
+    token = make_token(driver_user)
+    create_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Lucid",
+            "model": "Air Gravity",
+            "battery_kwh": 118.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 22.0,
+            "max_dc_kw": 300.0,
+            "consumption_kwh_100km": 18.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    veh_id = create_resp.json()["id"]
+    assert create_resp.json()["is_default"] is True
+
+    # Check GET /vehicles/default
+    resp_def = client.get(
+        "/api/v1/vehicles/default",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_def.status_code == 200
+    assert resp_def.json()["id"] == veh_id
+    assert resp_def.json()["is_default"] is True
+
+    # Check limit-and-default reflects this
+    limit_resp = client.get(
+        "/api/v1/vehicles/limit-and-default",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert limit_resp.json()["current_vehicle_count"] == 1
+    assert limit_resp.json()["default_vehicle_id"] == veh_id
+
+
+def test_set_default_vehicle_rest_and_architecture(client: TestClient, driver_user: User):
+    """TC-F1-22-03: Switching default vehicle unsets previous default, keeping exactly one default."""
+    token = make_token(driver_user)
+    # Add Vehicle 1 (default)
+    v1 = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Rivian",
+            "model": "R1T",
+            "battery_kwh": 135.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.5,
+            "max_dc_kw": 220.0,
+            "consumption_kwh_100km": 24.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+
+    # Add Vehicle 2
+    v2 = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Rivian",
+            "model": "R1S",
+            "battery_kwh": 135.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.5,
+            "max_dc_kw": 220.0,
+            "consumption_kwh_100km": 25.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+
+    # REST: Set vehicle 2 as default
+    set_resp = client.patch(
+        f"/api/v1/vehicles/{v2['id']}/set-default",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert set_resp.status_code == 200
+    assert set_resp.json()["success"] is True
+    assert set_resp.json()["default_vehicle"]["id"] == v2["id"]
+
+    # Verify vehicle 1 is now not default
+    get_v1 = client.get(f"/api/v1/vehicles/{v1['id']}", headers={"Authorization": f"Bearer {token}"}).json()
+    assert get_v1["is_default"] is False
+
+    # Architecture: Switch default back to vehicle 1 via PATCH /api/v1/accounts/vehicle-limit-and-default
+    arch_resp = client.patch(
+        "/api/v1/accounts/vehicle-limit-and-default",
+        json={"vehicle_id": v1["id"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert arch_resp.status_code == 200
+    assert arch_resp.json()["default_vehicle"]["id"] == v1["id"]
+
+    # Architecture POST alias
+    arch_post = client.post(
+        "/api/v1/accounts/vehicle-limit-and-default",
+        json={"vehicle_id": v2["id"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert arch_post.status_code == 200
+    assert arch_post.json()["default_vehicle"]["id"] == v2["id"]
+
+
+def test_set_default_vehicle_audit_log(
+    client: TestClient, db_session: Session, driver_user: User
+):
+    """TC-F1-22-04: Changing default vehicle creates a VEHICLE_DEFAULT_SET audit log entry."""
+    token = make_token(driver_user)
+    v1 = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Audi",
+            "model": "Q4 e-tron",
+            "battery_kwh": 77.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 135.0,
+            "consumption_kwh_100km": 17.5,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+    v2 = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Audi",
+            "model": "Q8 e-tron",
+            "battery_kwh": 106.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 22.0,
+            "max_dc_kw": 170.0,
+            "consumption_kwh_100km": 21.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+
+    client.patch(
+        f"/api/v1/vehicles/{v2['id']}/set-default",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    audit_entry = (
+        db_session.query(AuditLog)
+        .filter(
+            AuditLog.user_id == driver_user.id,
+            AuditLog.action == "VEHICLE_DEFAULT_SET",
+        )
+        .order_by(AuditLog.id.desc())
+        .first()
+    )
+    assert audit_entry is not None
+    assert "Q8 e-tron" in audit_entry.details
+
+
+def test_cannot_unset_default_on_only_vehicle(client: TestClient, driver_user: User):
+    """TC-F1-22-05: Driver cannot set is_default=False on their only registered vehicle."""
+    token = make_token(driver_user)
+    veh = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Kia",
+            "model": "EV9",
+            "battery_kwh": 99.8,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 210.0,
+            "consumption_kwh_100km": 22.5,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+
+    # Attempt to unset default
+    resp = client.patch(
+        f"/api/v1/vehicles/{veh['id']}",
+        json={"is_default": False},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 400
+    assert "exactly one default vehicle" in resp.json()["detail"].lower()
+
+
+def test_set_default_vehicle_foreign_driver_denied(
+    client: TestClient, driver_user: User, other_driver: User
+):
+    """TC-F1-22-06: Driver B cannot set Driver A's vehicle as default (REQ-F1-26)."""
+    token_a = make_token(driver_user)
+    veh_a = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "BMW",
+            "model": "iX M60",
+            "battery_kwh": 105.2,
+            "connector_type": "CCS2",
+            "max_ac_kw": 22.0,
+            "max_dc_kw": 195.0,
+            "consumption_kwh_100km": 23.0,
+        },
+        headers={"Authorization": f"Bearer {token_a}"},
+    ).json()
+
+    token_b = make_token(other_driver)
+    resp = client.patch(
+        f"/api/v1/vehicles/{veh_a['id']}/set-default",
+        headers={"Authorization": f"Bearer {token_b}"},
+    )
+    assert resp.status_code == 403
+    assert "access denied" in resp.json()["detail"].lower()
+
+
+def test_enforce_5_vehicles_and_reopen_on_deletion(client: TestClient, driver_user: User):
+    """TC-F1-22-07 / STC-F1-22-02: Strictly limits vehicles to 5; deleting opens slot to add again."""
+    token = make_token(driver_user)
+    vehicle_ids = []
+    # Add 5 vehicles
+    for i in range(1, 6):
+        resp = client.post(
+            "/api/v1/vehicles",
+            json={
+                "make": "QuotaTest",
+                "model": f"Model {i}",
+                "battery_kwh": 50.0 + i,
+                "connector_type": "CCS2",
+                "max_ac_kw": 11.0,
+                "max_dc_kw": 50.0,
+                "consumption_kwh_100km": 15.0,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 201
+        vehicle_ids.append(resp.json()["id"])
+
+    # Verify limit status
+    limit_resp = client.get("/api/v1/vehicles/limit-and-default", headers={"Authorization": f"Bearer {token}"}).json()
+    assert limit_resp["current_vehicle_count"] == 5
+    assert limit_resp["can_add_more"] is False
+
+    # Attempt to add 6th vehicle via standard route
+    resp6 = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "QuotaTest",
+            "model": "Model 6",
+            "battery_kwh": 60.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 50.0,
+            "consumption_kwh_100km": 15.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp6.status_code == 400
+    assert "maximum limit of 5 vehicles" in resp6.json()["detail"].lower()
+
+    # Attempt to add 6th vehicle via architecture route
+    resp6_arch = client.post(
+        "/api/v1/accounts/vehicle-crud",
+        json={
+            "make": "QuotaTest",
+            "model": "Model 6",
+            "battery_kwh": 60.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 50.0,
+            "consumption_kwh_100km": 15.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp6_arch.status_code == 400
+
+    # Delete one vehicle
+    client.delete(f"/api/v1/vehicles/{vehicle_ids[0]}", headers={"Authorization": f"Bearer {token}"})
+
+    # Now limit allows adding again
+    limit_after = client.get("/api/v1/vehicles/limit-and-default", headers={"Authorization": f"Bearer {token}"}).json()
+    assert limit_after["current_vehicle_count"] == 4
+    assert limit_after["can_add_more"] is True
+
+    # Successfully add 5th vehicle
+    resp_readd = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "QuotaTest",
+            "model": "Model 5 Replacement",
+            "battery_kwh": 65.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 50.0,
+            "consumption_kwh_100km": 15.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_readd.status_code == 201
+
+
+

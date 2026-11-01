@@ -14,6 +14,9 @@ from app.schemas.vehicle import (
     VehicleValidationCheckResponse,
     VehicleSummaryCardResponse,
     VehicleSummaryCardListResponse,
+    SetDefaultVehicleRequest,
+    VehicleLimitAndDefaultResponse,
+    SetDefaultVehicleResponse,
 )
 from app.services.audit_service import AuditService
 
@@ -217,6 +220,16 @@ class VehicleService:
                 vehicle.is_default = True
                 changes.append("is_default: False -> True")
             elif data.is_default is False and vehicle.is_default:
+                total_vehicles = db.query(Vehicle).filter(Vehicle.user_id == user.id).count()
+                if total_vehicles <= 1:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="A driver must have exactly one default vehicle (REQ-F1-22). Cannot unset default on your only vehicle.",
+                    )
+                # Reassign default to another vehicle
+                other_veh = db.query(Vehicle).filter(Vehicle.user_id == user.id, Vehicle.id != vehicle.id).first()
+                if other_veh:
+                    other_veh.is_default = True
                 vehicle.is_default = False
                 changes.append("is_default: True -> False")
 
@@ -279,6 +292,80 @@ class VehicleService:
             message=f"Vehicle '{veh_info}' has been successfully removed.",
             vehicle_id=vehicle_id,
             status="success",
+        )
+
+    @staticmethod
+    def get_limit_and_default(db: Session, user: User) -> VehicleLimitAndDefaultResponse:
+        """
+        Get vehicle quota limits and current default vehicle status for the driver (CS19-022 / REQ-F1-22).
+        Guarantees that if vehicles exist, exactly one is marked as default.
+        """
+        count = db.query(Vehicle).filter(Vehicle.user_id == user.id).count()
+        default_veh = db.query(Vehicle).filter(Vehicle.user_id == user.id, Vehicle.is_default == True).first()
+
+        # Enforce exactly one default vehicle if vehicles exist but none is default
+        if count > 0 and not default_veh:
+            default_veh = (
+                db.query(Vehicle)
+                .filter(Vehicle.user_id == user.id)
+                .order_by(Vehicle.created_at.desc())
+                .first()
+            )
+            if default_veh:
+                default_veh.is_default = True
+                db.commit()
+                db.refresh(default_veh)
+
+        can_add = count < VehicleService.MAX_VEHICLES_PER_DRIVER
+        message = (
+            f"You have {count} of {VehicleService.MAX_VEHICLES_PER_DRIVER} maximum vehicles."
+            if can_add
+            else f"Vehicle limit reached ({VehicleService.MAX_VEHICLES_PER_DRIVER}/{VehicleService.MAX_VEHICLES_PER_DRIVER})."
+        )
+
+        return VehicleLimitAndDefaultResponse(
+            max_vehicles_allowed=VehicleService.MAX_VEHICLES_PER_DRIVER,
+            current_vehicle_count=count,
+            can_add_more=can_add,
+            default_vehicle_id=default_veh.id if default_veh else None,
+            default_vehicle=VehicleResponse.model_validate(default_veh) if default_veh else None,
+            message=message,
+        )
+
+    @staticmethod
+    def set_default_vehicle(
+        db: Session,
+        vehicle_id: int,
+        user: User,
+        ip_address: str | None = None,
+    ) -> SetDefaultVehicleResponse:
+        """
+        Set a specific vehicle as the driver's primary default vehicle (CS19-022 / REQ-F1-22).
+        Unsets all other defaults ensuring exactly one default vehicle exists.
+        """
+        target_veh = VehicleService.get_vehicle_by_id(db=db, vehicle_id=vehicle_id, user=user)
+
+        if not target_veh.is_default:
+            # Unset all other defaults for this driver
+            db.query(Vehicle).filter(Vehicle.user_id == user.id, Vehicle.id != target_veh.id).update({"is_default": False})
+            target_veh.is_default = True
+
+            AuditService.log_action(
+                db=db,
+                user_id=user.id,
+                action="VEHICLE_DEFAULT_SET",
+                resource=f"vehicle:{target_veh.id}",
+                details=f"Set {target_veh.make} {target_veh.model} as default vehicle (REQ-F1-22)",
+                ip_address=ip_address,
+                commit=False,
+            )
+            db.commit()
+            db.refresh(target_veh)
+
+        return SetDefaultVehicleResponse(
+            success=True,
+            message=f"Vehicle '{target_veh.make} {target_veh.model}' is now your default vehicle.",
+            default_vehicle=VehicleResponse.model_validate(target_veh),
         )
 
     @staticmethod

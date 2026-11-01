@@ -179,3 +179,27 @@ class VehicleSummaryCardResponse(BaseModel):
 class VehicleSummaryCardListResponse(BaseModel):
     total: int
     items: list[VehicleSummaryCardResponse]
+
+
+# ==============================================================================
+# Vehicle Limit & Default Schemas (CS19-022 / REQ-F1-22)
+# ==============================================================================
+
+class SetDefaultVehicleRequest(BaseModel):
+    vehicle_id: int = Field(..., description="ID of the vehicle to set as primary default")
+
+
+class VehicleLimitAndDefaultResponse(BaseModel):
+    max_vehicles_allowed: int = 5
+    current_vehicle_count: int
+    can_add_more: bool
+    default_vehicle_id: int | None = None
+    default_vehicle: VehicleResponse | None = None
+    message: str
+
+
+class SetDefaultVehicleResponse(BaseModel):
+    success: bool = True
+    message: str
+    default_vehicle: VehicleResponse
+
