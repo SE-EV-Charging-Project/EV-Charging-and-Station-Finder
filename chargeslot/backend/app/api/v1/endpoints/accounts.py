@@ -36,6 +36,11 @@ from app.schemas.vehicle import (
     VehicleCreateRequest,
     VehicleResponse,
     VehicleListResponse,
+    VehicleValidationRulesResponse,
+    VehicleValidationCheckRequest,
+    VehicleValidationCheckResponse,
+    VehicleSummaryCardResponse,
+    VehicleSummaryCardListResponse,
 )
 from app.services.admin_service import AdminService
 from app.services.audit_service import AuditService
@@ -599,6 +604,61 @@ def list_vehicles_crud(
     db: Session = Depends(get_db),
 ) -> VehicleListResponse:
     return VehicleService.list_vehicles(db=db, user=current_user)
+
+
+@router.get(
+    "/vehicle-value-validation",
+    response_model=VehicleValidationRulesResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Vehicle value validation rules (architecture route)",
+    description="Matching SW Architecture Page 5: Retrieve validation rules for vehicle values (REQ-F1-19 / REQ-F1-24)."
+)
+def get_vehicle_value_validation_rules() -> VehicleValidationRulesResponse:
+    return VehicleService.get_validation_rules()
+
+
+@router.post(
+    "/vehicle-value-validation",
+    response_model=VehicleValidationCheckResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Validate vehicle values inline (architecture route)",
+    description="Matching SW Architecture Page 5: Perform inline validation on vehicle input values (REQ-F1-19 / REQ-F1-24)."
+)
+def check_vehicle_value_validation(
+    payload: VehicleValidationCheckRequest,
+    current_user: User = Depends(get_current_user),
+) -> VehicleValidationCheckResponse:
+    return VehicleService.validate_vehicle_inputs(payload=payload)
+
+
+@router.get(
+    "/vehicle-summary-card",
+    response_model=VehicleSummaryCardListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List driver vehicle summary cards",
+    description="Matching SW Architecture: List summary cards with compatibility badges for all vehicles (REQ-F1-20 / CS19-020)."
+)
+def list_vehicle_summary_cards_account(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VehicleSummaryCardListResponse:
+    return VehicleService.list_vehicle_summaries(db=db, user=current_user)
+
+
+@router.get(
+    "/vehicle-summary-card/{vehicle_id}",
+    response_model=VehicleSummaryCardResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get vehicle summary card",
+    description="Matching SW Architecture: Fetch vehicle summary card with compatibility icons by vehicle ID (REQ-F1-20 / CS19-020)."
+)
+def get_vehicle_summary_card_account(
+    vehicle_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VehicleSummaryCardResponse:
+    return VehicleService.get_vehicle_summary(db=db, vehicle_id=vehicle_id, user=current_user)
+
 
 
 

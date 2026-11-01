@@ -4,7 +4,16 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.vehicle import VehicleCreateRequest, VehicleResponse, VehicleListResponse
+from app.schemas.vehicle import (
+    VehicleCreateRequest,
+    VehicleResponse,
+    VehicleListResponse,
+    VehicleValidationRulesResponse,
+    VehicleValidationCheckRequest,
+    VehicleValidationCheckResponse,
+    VehicleSummaryCardResponse,
+    VehicleSummaryCardListResponse,
+)
 from app.services.vehicle_service import VehicleService
 
 router = APIRouter(prefix="/vehicles", tags=["Vehicles"])
@@ -47,6 +56,60 @@ def list_vehicles(
 
 
 @router.get(
+    "/validation-rules",
+    response_model=VehicleValidationRulesResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get vehicle validation rules",
+    description="Returns metadata specification rules and valid bounds for EV vehicles (REQ-F1-19 / CS19-019 / Appendix B.3)."
+)
+def get_vehicle_validation_rules() -> VehicleValidationRulesResponse:
+    return VehicleService.get_validation_rules()
+
+
+@router.post(
+    "/validate",
+    response_model=VehicleValidationCheckResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Validate vehicle inputs",
+    description="Performs pre-save inline validation for vehicle values against Appendix B ranges (REQ-F1-19 / CS19-019)."
+)
+def validate_vehicle(
+    payload: VehicleValidationCheckRequest,
+    current_user: User = Depends(get_current_user),
+) -> VehicleValidationCheckResponse:
+    return VehicleService.validate_vehicle_inputs(payload=payload)
+
+
+@router.get(
+    "/summary/cards",
+    response_model=VehicleSummaryCardListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List vehicle summary cards",
+    description="Lists summary cards for all vehicles of the authenticated driver with compatibility icons (REQ-F1-20 / CS19-020)."
+)
+def list_vehicle_summary_cards(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VehicleSummaryCardListResponse:
+    return VehicleService.list_vehicle_summaries(db=db, user=current_user)
+
+
+@router.get(
+    "/{vehicle_id}/summary",
+    response_model=VehicleSummaryCardResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get vehicle summary card",
+    description="Displays a summary card for a specific vehicle showing compatibility icons and calculated ranges (REQ-F1-20 / CS19-020)."
+)
+def get_vehicle_summary_card(
+    vehicle_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VehicleSummaryCardResponse:
+    return VehicleService.get_vehicle_summary(db=db, vehicle_id=vehicle_id, user=current_user)
+
+
+@router.get(
     "/{vehicle_id}",
     response_model=VehicleResponse,
     status_code=status.HTTP_200_OK,
@@ -58,4 +121,5 @@ def get_vehicle(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> VehicleResponse:
-    return VehicleService.get_vehicle_by_id(db=db, vehicle_id=vehicle_id, user=current_user)
+    vehicle = VehicleService.get_vehicle_by_id(db=db, vehicle_id=vehicle_id, user=current_user)
+    return VehicleResponse.model_validate(vehicle)

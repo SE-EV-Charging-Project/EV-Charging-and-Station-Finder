@@ -523,3 +523,288 @@ def test_max_five_vehicles_limit(client: TestClient, driver_user: User):
     )
     assert resp_sixth.status_code == 400
     assert "maximum limit of 5 vehicles" in resp_sixth.json()["detail"].lower()
+
+
+# ==============================================================================
+# CS19-019 / REQ-F1-19: Vehicle Validation
+# ==============================================================================
+
+def test_get_vehicle_validation_rules(client: TestClient):
+    """TC-F1-19-01: Verifies validation rules metadata endpoint via REST."""
+    resp = client.get("/api/v1/vehicles/validation-rules")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    rules = data["rules"]
+    assert "battery_kwh" in rules
+    assert rules["battery_kwh"]["min"] == 5.0
+    assert rules["battery_kwh"]["max"] == 250.0
+    assert "connector_type" in rules
+    assert set(rules["connector_type"]["allowed_values"]) == {"CCS2", "CHAdeMO", "Type 2", "GB/T"}
+    assert rules["max_ac_kw"]["min"] == 1.0
+    assert rules["max_ac_kw"]["max"] == 50.0
+    assert rules["consumption_kwh_100km"]["min"] == 5.0
+    assert rules["consumption_kwh_100km"]["max"] == 50.0
+
+
+def test_get_vehicle_validation_rules_architecture(client: TestClient):
+    """TC-F1-19-02: Verifies SW Architecture route GET /api/v1/accounts/vehicle-value-validation."""
+    resp = client.get("/api/v1/accounts/vehicle-value-validation")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert "battery_kwh" in data["rules"]
+
+
+def test_validate_vehicle_inputs_valid(client: TestClient, driver_user: User):
+    """TC-F1-19-03: Verifies inline pre-save validation returns is_valid=True for valid fields."""
+    token = make_token(driver_user)
+    payload = {
+        "make": "BMW",
+        "model": "i4 eDrive40",
+        "battery_kwh": 83.9,
+        "connector_type": "CCS2",
+        "max_ac_kw": 11.0,
+        "max_dc_kw": 205.0,
+        "consumption_kwh_100km": 18.0,
+        "registration_no": "KA05EV0001",
+    }
+    resp = client.post(
+        "/api/v1/vehicles/validate",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["is_valid"] is True
+    assert data["errors"] == {}
+    assert "successful" in data["message"].lower()
+
+
+def test_validate_vehicle_inputs_invalid(client: TestClient, driver_user: User):
+    """TC-F1-19-04: Verifies inline pre-save validation returns field-level error messages."""
+    token = make_token(driver_user)
+    payload = {
+        "make": " ",  # blank
+        "model": "",  # blank
+        "battery_kwh": 300.0,  # > 250
+        "connector_type": "InvalidPlug",
+        "max_ac_kw": 0.2,  # < 1.0
+        "max_dc_kw": 5.0,  # must be 0 or 10-400
+        "consumption_kwh_100km": 55.0,  # > 50
+        "registration_no": "A" * 20,  # > 15 chars
+    }
+    resp = client.post(
+        "/api/v1/vehicles/validate",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["is_valid"] is False
+    errors = data["errors"]
+    assert "make" in errors
+    assert "model" in errors
+    assert "battery_kwh" in errors
+    assert "connector_type" in errors
+    assert "max_ac_kw" in errors
+    assert "max_dc_kw" in errors
+    assert "consumption_kwh_100km" in errors
+    assert "registration_no" in errors
+
+
+def test_validate_vehicle_architecture_endpoint(client: TestClient, driver_user: User):
+    """TC-F1-19-05: Verifies SW Architecture route POST /api/v1/accounts/vehicle-value-validation."""
+    token = make_token(driver_user)
+    payload = {
+        "battery_kwh": 70.0,
+        "connector_type": "CCS2",
+        "max_ac_kw": 11.0,
+    }
+    resp = client.post(
+        "/api/v1/accounts/vehicle-value-validation",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["is_valid"] is True
+
+
+# ==============================================================================
+# CS19-020 / REQ-F1-20: Vehicle Summary Card
+# ==============================================================================
+
+def test_get_vehicle_summary_card_success(client: TestClient, driver_user: User):
+    """TC-F1-20-01 / STC-F1-20-01: Verifies summary card generation with compatibility badges & icons."""
+    token = make_token(driver_user)
+    create_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Audi",
+            "model": "e-tron GT",
+            "battery_kwh": 93.4,
+            "connector_type": "CCS2",
+            "max_ac_kw": 22.0,
+            "max_dc_kw": 270.0,
+            "consumption_kwh_100km": 19.5,
+            "registration_no": "MH12EV0007",
+            "is_default": True,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_resp.status_code == 201
+    veh_id = create_resp.json()["id"]
+
+    resp = client.get(
+        f"/api/v1/vehicles/{veh_id}/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["vehicle_id"] == veh_id
+    assert data["display_title"] == "Audi e-tron GT"
+    assert data["connector_icon"] == "icon-ccs2"
+    assert data["current_type"] == "AC/DC"
+    assert data["fast_charging_support"] is True
+    assert data["max_ac_kw"] == 22.0
+    assert data["max_dc_kw"] == 270.0
+    # Calculations check:
+    # estimated = round(93.4 / (19.5 / 100), 1) = 479.0
+    # usable = round(0.9 * 93.4 / (19.5 / 100), 1) = 431.1
+    assert data["estimated_range_km"] == 479.0
+    assert data["usable_range_km"] == 431.1
+    # Check compatibility badges
+    badges = data["compatibility_badges"]
+    assert any("CCS2" in b for b in badges)
+    assert any("Fast Charging" in b for b in badges)
+    assert any("Long Range" in b for b in badges)
+    assert any("Default Vehicle" in b for b in badges)
+
+
+def test_get_vehicle_summary_card_ac_only(client: TestClient, driver_user: User):
+    """TC-F1-20-02: Verifies summary card for AC-only vehicle."""
+    token = make_token(driver_user)
+    create_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Smart",
+            "model": "EQ Fortwo",
+            "battery_kwh": 17.6,
+            "connector_type": "Type 2",
+            "max_ac_kw": 22.0,
+            "max_dc_kw": 0.0,
+            "consumption_kwh_100km": 16.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    veh_id = create_resp.json()["id"]
+
+    resp = client.get(
+        f"/api/v1/vehicles/{veh_id}/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["connector_icon"] == "icon-type2"
+    assert data["current_type"] == "AC Only"
+    assert data["fast_charging_support"] is False
+    assert any("AC Charging Only" in b for b in data["compatibility_badges"])
+
+
+def test_list_vehicle_summary_cards(client: TestClient, driver_user: User):
+    """TC-F1-20-03: Lists summary cards for all vehicles of driver."""
+    token = make_token(driver_user)
+    client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Polestar",
+            "model": "2 Long Range",
+            "battery_kwh": 78.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 150.0,
+            "consumption_kwh_100km": 17.5,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    resp = client.get(
+        "/api/v1/vehicles/summary/cards",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] >= 1
+    assert all("connector_icon" in item for item in data["items"])
+
+
+def test_vehicle_summary_card_architecture_routes(client: TestClient, driver_user: User):
+    """TC-F1-20-04: Verifies SW Architecture routes for vehicle summary cards."""
+    token = make_token(driver_user)
+    client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Volvo",
+            "model": "XC40 Recharge",
+            "battery_kwh": 78.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 150.0,
+            "consumption_kwh_100km": 19.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    # List route
+    resp_list = client.get(
+        "/api/v1/accounts/vehicle-summary-card",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_list.status_code == 200
+    assert resp_list.json()["total"] >= 1
+
+    first_veh_id = resp_list.json()["items"][0]["vehicle_id"]
+    # Single vehicle route
+    resp_single = client.get(
+        f"/api/v1/accounts/vehicle-summary-card/{first_veh_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_single.status_code == 200
+    assert resp_single.json()["vehicle_id"] == first_veh_id
+
+
+def test_vehicle_summary_card_driver_isolation(
+    client: TestClient, driver_user: User, other_driver: User
+):
+    """TC-F1-20-05: Driver B cannot view Driver A's vehicle summary card (REQ-F1-26)."""
+    driver_a_token = make_token(driver_user)
+    create_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Porsche",
+            "model": "Taycan",
+            "battery_kwh": 93.4,
+            "connector_type": "CCS2",
+            "max_ac_kw": 22.0,
+            "max_dc_kw": 270.0,
+            "consumption_kwh_100km": 21.0,
+        },
+        headers={"Authorization": f"Bearer {driver_a_token}"},
+    )
+    veh_id = create_resp.json()["id"]
+
+    driver_b_token = make_token(other_driver)
+    resp = client.get(
+        f"/api/v1/vehicles/{veh_id}/summary",
+        headers={"Authorization": f"Bearer {driver_b_token}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_vehicle_summary_card_not_found(client: TestClient, driver_user: User):
+    """TC-F1-20-06: Requesting summary card for non-existent vehicle returns 404."""
+    token = make_token(driver_user)
+    resp = client.get(
+        "/api/v1/vehicles/999999/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 404
+
