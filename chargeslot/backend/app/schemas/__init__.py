@@ -24,6 +24,9 @@ from app.schemas.vehicle import (
     VehicleValidationCheckResponse,
     VehicleSummaryCardResponse,
     VehicleSummaryCardListResponse,
+    SetDefaultVehicleRequest,
+    VehicleLimitAndDefaultResponse,
+    SetDefaultVehicleResponse,
 )
 
 __all__ = [
@@ -49,4 +52,7 @@ __all__ = [
     "VehicleValidationCheckResponse",
     "VehicleSummaryCardResponse",
     "VehicleSummaryCardListResponse",
+    "SetDefaultVehicleRequest",
+    "VehicleLimitAndDefaultResponse",
+    "SetDefaultVehicleResponse",
 ]

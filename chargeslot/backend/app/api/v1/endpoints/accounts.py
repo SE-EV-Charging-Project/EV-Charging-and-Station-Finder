@@ -43,6 +43,9 @@ from app.schemas.vehicle import (
     VehicleValidationCheckResponse,
     VehicleSummaryCardResponse,
     VehicleSummaryCardListResponse,
+    SetDefaultVehicleRequest,
+    VehicleLimitAndDefaultResponse,
+    SetDefaultVehicleResponse,
 )
 from app.services.admin_service import AdminService
 from app.services.audit_service import AuditService
@@ -652,6 +655,65 @@ def remove_vehicle_crud(
         user=current_user,
         ip_address=client_ip,
     )
+
+
+@router.get(
+    "/vehicle-limit-and-default",
+    response_model=VehicleLimitAndDefaultResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Vehicle limit and default (architecture route)",
+    description="Matching SW Architecture Page 5: Retrieve 5-vehicle limit status and single default vehicle (REQ-F1-22 / CS19-022)."
+)
+def get_vehicle_limit_and_default_account(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VehicleLimitAndDefaultResponse:
+    return VehicleService.get_limit_and_default(db=db, user=current_user)
+
+
+@router.patch(
+    "/vehicle-limit-and-default",
+    response_model=SetDefaultVehicleResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Set default vehicle (architecture route)",
+    description="Matching SW Architecture Page 5: Set primary default vehicle, guaranteeing exactly one default (REQ-F1-22 / CS19-022)."
+)
+def set_default_vehicle_account(
+    payload: SetDefaultVehicleRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SetDefaultVehicleResponse:
+    client_ip = request.client.host if request.client else None
+    return VehicleService.set_default_vehicle(
+        db=db,
+        vehicle_id=payload.vehicle_id,
+        user=current_user,
+        ip_address=client_ip,
+    )
+
+
+@router.post(
+    "/vehicle-limit-and-default",
+    response_model=SetDefaultVehicleResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Set default vehicle alias (architecture route)",
+    description="Matching SW Architecture Page 5 POST alias: Set primary default vehicle (REQ-F1-22 / CS19-022)."
+)
+def set_default_vehicle_account_post(
+    payload: SetDefaultVehicleRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SetDefaultVehicleResponse:
+    client_ip = request.client.host if request.client else None
+    return VehicleService.set_default_vehicle(
+        db=db,
+        vehicle_id=payload.vehicle_id,
+        user=current_user,
+        ip_address=client_ip,
+    )
+
 
 
 
