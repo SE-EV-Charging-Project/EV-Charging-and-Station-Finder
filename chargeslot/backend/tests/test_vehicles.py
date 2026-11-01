@@ -1570,4 +1570,361 @@ def test_enforce_5_vehicles_and_reopen_on_deletion(client: TestClient, driver_us
     assert resp_readd.status_code == 201
 
 
+# ==============================================================================
+# CS19-023 / REQ-F1-23: Preset EV Models (TC-F1-23 / STC-F1-23)
+# ==============================================================================
+
+def test_list_preset_ev_models_rest_and_architecture(client: TestClient, driver_user: User):
+    """TC-F1-23-01 / STC-F1-23-01: List preset EV models via REST and architecture routes."""
+    # REST route
+    resp1 = client.get("/api/v1/vehicles/presets")
+    assert resp1.status_code == 200
+    data1 = resp1.json()
+    assert data1["total"] >= 10
+    preset_ids = [p["id"] for p in data1["items"]]
+    assert "tata-nexon-ev-lr" in preset_ids
+    assert "hyundai-ioniq-5" in preset_ids
+    assert "tesla-model-3" in preset_ids
+    assert "nissan-leaf" in preset_ids
+
+    # Architecture route
+    resp2 = client.get("/api/v1/accounts/preset-ev-models")
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["total"] == data1["total"]
+
+
+def test_filter_preset_ev_models(client: TestClient):
+    """TC-F1-23-02: Filter presets by make and connector type."""
+    # Filter by make
+    resp_make = client.get("/api/v1/vehicles/presets?make=Tata")
+    assert resp_make.status_code == 200
+    data_make = resp_make.json()
+    assert data_make["total"] >= 3
+    for p in data_make["items"]:
+        assert p["make"].lower() == "tata"
+
+    # Filter by connector type
+    resp_conn = client.get("/api/v1/vehicles/presets?connector_type=CHAdeMO")
+    assert resp_conn.status_code == 200
+    data_conn = resp_conn.json()
+    assert data_conn["total"] >= 1
+    for p in data_conn["items"]:
+        assert p["connector_type"] == "CHAdeMO"
+
+
+def test_get_single_preset_ev_model(client: TestClient):
+    """TC-F1-23-03: Retrieve single preset EV model by ID."""
+    resp = client.get("/api/v1/vehicles/presets/tata-nexon-ev-lr")
+    assert resp.status_code == 200
+    p = resp.json()
+    assert p["id"] == "tata-nexon-ev-lr"
+    assert p["make"] == "Tata"
+    assert p["battery_kwh"] == 40.5
+    assert p["connector_type"] == "CCS2"
+    assert p["max_ac_kw"] == 7.2
+    assert p["max_dc_kw"] == 50.0
+
+    # Non-existent preset returns 404
+    resp_404 = client.get("/api/v1/vehicles/presets/non-existent-ev-model")
+    assert resp_404.status_code == 404
+    assert "not found" in resp_404.json()["detail"].lower()
+
+
+def test_apply_preset_prefill_only(client: TestClient, driver_user: User):
+    """TC-F1-23-04: Apply preset EV model to prefill specification fields without creating vehicle."""
+    token = make_token(driver_user)
+    payload = {
+        "preset_id": "hyundai-ioniq-5",
+        "registration_no": "KA05EV1122",
+        "custom_battery_kwh": 70.0,
+        "create_vehicle": False,
+    }
+    # Test via REST route
+    resp = client.post(
+        "/api/v1/vehicles/presets/apply",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["preset_id"] == "hyundai-ioniq-5"
+    assert data["created_vehicle"] is None
+    spec = data["prefilled_spec"]
+    assert spec["make"] == "Hyundai"
+    assert spec["model"] == "Ioniq 5 RWD"
+    assert spec["battery_kwh"] == 70.0  # overridden
+    assert spec["max_ac_kw"] == 11.0  # preset default
+    assert spec["connector_type"] == "CCS2"
+    assert spec["registration_no"] == "KA05EV1122"
+
+    # Architecture route POST /api/v1/accounts/preset-ev-models
+    resp_arch = client.post(
+        "/api/v1/accounts/preset-ev-models",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_arch.status_code == 200
+    assert resp_arch.json()["preset_id"] == "hyundai-ioniq-5"
+
+
+def test_apply_preset_create_vehicle_in_garage(client: TestClient, db_session: Session, driver_user: User):
+    """TC-F1-23-05 / STC-F1-23-02: Apply preset with create_vehicle=True saves vehicle to driver profile."""
+    token = make_token(driver_user)
+    payload = {
+        "preset_id": "tesla-model-3",
+        "registration_no": "MH12EV9876",
+        "create_vehicle": True,
+    }
+    resp = client.post(
+        "/api/v1/vehicles/presets/apply",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["created_vehicle"] is not None
+    created = data["created_vehicle"]
+    assert created["make"] == "Tesla"
+    assert created["model"] == "Model 3 RWD"
+    assert created["battery_kwh"] == 60.0
+    assert created["registration_no"] == "MH12EV9876"
+    assert created["is_default"] is True  # First vehicle becomes default
+
+    # Verify audit log was recorded for vehicle addition
+    audit = db_session.query(AuditLog).filter(
+        AuditLog.user_id == driver_user.id,
+        AuditLog.action == "VEHICLE_ADDED",
+    ).first()
+    assert audit is not None
+
+
+def test_apply_preset_invalid_preset_id_and_out_of_range(client: TestClient, driver_user: User):
+    """TC-F1-23-06: Applying invalid preset ID returns 404; out of range override returns 422."""
+    token = make_token(driver_user)
+    # Invalid preset ID
+    resp_404 = client.post(
+        "/api/v1/vehicles/presets/apply",
+        json={"preset_id": "non-existent-id"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_404.status_code == 404
+
+    # Out of range battery override (> 250 kWh)
+    resp_422 = client.post(
+        "/api/v1/vehicles/presets/apply",
+        json={
+            "preset_id": "tesla-model-3",
+            "custom_battery_kwh": 300.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_422.status_code == 422
+
+
+# ==============================================================================
+# CS19-024 / REQ-F1-24: Vehicle Value Validation (TC-F1-24 / STC-F1-24)
+# ==============================================================================
+
+def test_vehicle_validation_rules_metadata_appendix_b(client: TestClient):
+    """TC-F1-24-01: Metadata validation rules reflect Appendix B.3 ranges."""
+    # REST route
+    resp = client.get("/api/v1/vehicles/validation-rules")
+    assert resp.status_code == 200
+    rules = resp.json()["rules"]
+    assert rules["battery_kwh"]["min"] == 5.0
+    assert rules["battery_kwh"]["max"] == 250.0
+    assert rules["max_ac_kw"]["min"] == 1.0
+    assert rules["max_ac_kw"]["max"] == 50.0
+    assert rules["max_dc_kw"]["min_if_supported"] == 10.0
+    assert rules["max_dc_kw"]["max"] == 400.0
+    assert rules["consumption_kwh_100km"]["min"] == 5.0
+    assert rules["consumption_kwh_100km"]["max"] == 50.0
+    assert rules["make"]["max_length"] == 40
+    assert rules["model"]["max_length"] == 40
+    assert rules["registration_no"]["max_length"] == 15
+
+    # Architecture route
+    resp_arch = client.get("/api/v1/accounts/vehicle-value-validation")
+    assert resp_arch.status_code == 200
+    assert resp_arch.json()["rules"]["battery_kwh"]["max"] == 250.0
+
+
+def test_vehicle_validation_check_valid_and_boundaries(client: TestClient, driver_user: User):
+    """TC-F1-24-02: Boundary valid values in Appendix B.3 are accepted."""
+    token = make_token(driver_user)
+    # Lower boundary
+    resp_low = client.post(
+        "/api/v1/vehicles/validate",
+        json={
+            "make": "A",
+            "model": "B",
+            "battery_kwh": 5.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 1.0,
+            "max_dc_kw": 0.0,
+            "consumption_kwh_100km": 5.0,
+            "registration_no": "A",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_low.status_code == 200
+    assert resp_low.json()["is_valid"] is True
+    assert resp_low.json()["errors"] == {}
+
+    # Upper boundary
+    resp_high = client.post(
+        "/api/v1/accounts/vehicle-value-validation",
+        json={
+            "make": "M" * 40,
+            "model": "O" * 40,
+            "battery_kwh": 250.0,
+            "connector_type": "GB/T",
+            "max_ac_kw": 50.0,
+            "max_dc_kw": 400.0,
+            "consumption_kwh_100km": 50.0,
+            "registration_no": "R" * 15,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_high.status_code == 200
+    assert resp_high.json()["is_valid"] is True
+    assert resp_high.json()["errors"] == {}
+
+    # DC lower boundary when supported (10.0 kW)
+    resp_dc_min = client.post(
+        "/api/v1/vehicles/validate",
+        json={"max_dc_kw": 10.0},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_dc_min.status_code == 200
+    assert resp_dc_min.json()["is_valid"] is True
+
+
+def test_vehicle_validation_check_out_of_range_rejected(client: TestClient, driver_user: User):
+    """TC-F1-24-03 / STC-F1-24-01: Values outside Appendix B.3 ranges are rejected with errors."""
+    token = make_token(driver_user)
+    # Below minimums
+    resp_below = client.post(
+        "/api/v1/vehicles/validate",
+        json={
+            "make": "   ",
+            "model": "",
+            "battery_kwh": 4.9,
+            "connector_type": "UnsupportedType",
+            "max_ac_kw": 0.9,
+            "max_dc_kw": 5.0,  # Below 10.0 when > 0
+            "consumption_kwh_100km": 4.9,
+            "registration_no": "TOOLONGREGISTRATIONNO",  # > 15 chars
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_below.status_code == 200
+    data_below = resp_below.json()
+    assert data_below["is_valid"] is False
+    errors = data_below["errors"]
+    assert "make" in errors
+    assert "model" in errors
+    assert "battery_kwh" in errors
+    assert "connector_type" in errors
+    assert "max_ac_kw" in errors
+    assert "max_dc_kw" in errors
+    assert "consumption_kwh_100km" in errors
+    assert "registration_no" in errors
+
+    # Above maximums
+    resp_above = client.post(
+        "/api/v1/accounts/vehicle-value-validation",
+        json={
+            "make": "M" * 41,
+            "model": "O" * 41,
+            "battery_kwh": 250.1,
+            "max_ac_kw": 50.1,
+            "max_dc_kw": 400.1,
+            "consumption_kwh_100km": 50.1,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_above.status_code == 200
+    data_above = resp_above.json()
+    assert data_above["is_valid"] is False
+    errors_above = data_above["errors"]
+    assert "make" in errors_above
+    assert "model" in errors_above
+    assert "battery_kwh" in errors_above
+    assert "max_ac_kw" in errors_above
+    assert "max_dc_kw" in errors_above
+    assert "consumption_kwh_100km" in errors_above
+
+
+def test_vehicle_create_and_update_strictly_enforce_appendix_b(client: TestClient, driver_user: User):
+    """TC-F1-24-04 / STC-F1-24-02: POST and PATCH vehicle endpoints strictly reject out-of-range values."""
+    token = make_token(driver_user)
+    # POST with battery_kwh > 250
+    resp_bad_create = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "InvalidVolt",
+            "model": "Megabattery",
+            "battery_kwh": 300.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 50.0,
+            "consumption_kwh_100km": 15.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_bad_create.status_code == 422
+
+    # POST with DC rate between 0 and 10 kW (e.g. 5 kW)
+    resp_bad_dc = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "InvalidVolt",
+            "model": "WeirdDC",
+            "battery_kwh": 50.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 5.0,
+            "consumption_kwh_100km": 15.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_bad_dc.status_code == 422
+
+    # Create a valid vehicle first
+    resp_valid = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "ValidVolt",
+            "model": "EV One",
+            "battery_kwh": 50.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 50.0,
+            "consumption_kwh_100km": 15.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_valid.status_code == 201
+    veh_id = resp_valid.json()["id"]
+
+    # PATCH with consumption > 50
+    resp_bad_patch = client.patch(
+        f"/api/v1/vehicles/{veh_id}",
+        json={"consumption_kwh_100km": 60.0},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_bad_patch.status_code == 422
+
+    # PATCH with AC rate < 1.0
+    resp_bad_ac = client.patch(
+        f"/api/v1/vehicles/{veh_id}",
+        json={"max_ac_kw": 0.5},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_bad_ac.status_code == 422
+
+
+
 

@@ -203,3 +203,45 @@ class SetDefaultVehicleResponse(BaseModel):
     message: str
     default_vehicle: VehicleResponse
 
+
+# ==============================================================================
+# Preset EV Models Schemas (CS19-023 / REQ-F1-23)
+# ==============================================================================
+
+class EVPresetModelResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    make: str
+    model: str
+    battery_kwh: float
+    connector_type: ConnectorType
+    max_ac_kw: float
+    max_dc_kw: float
+    consumption_kwh_100km: float
+    description: str
+
+
+class EVPresetListResponse(BaseModel):
+    total: int
+    items: list[EVPresetModelResponse]
+
+
+class ApplyPresetRequest(BaseModel):
+    preset_id: str = Field(..., description="ID or slug of the preset EV model (e.g. 'tata-nexon-ev-lr')")
+    registration_no: str | None = Field(default=None, max_length=15, description="Optional vehicle registration plate")
+    is_default: bool = Field(default=False, description="Set as driver's default vehicle")
+    custom_battery_kwh: float | None = Field(default=None, ge=5.0, le=250.0, description="Override battery capacity in kWh")
+    custom_max_ac_kw: float | None = Field(default=None, ge=1.0, le=50.0, description="Override AC charging rate in kW")
+    custom_max_dc_kw: float | None = Field(default=None, ge=0.0, le=400.0, description="Override DC charging rate in kW")
+    custom_consumption_kwh_100km: float | None = Field(default=None, ge=5.0, le=50.0, description="Override consumption in kWh/100km")
+    create_vehicle: bool = Field(default=False, description="If True, directly saves vehicle to driver profile; if False, returns pre-filled specifications")
+
+
+class ApplyPresetResponse(BaseModel):
+    preset_id: str
+    prefilled_spec: VehicleCreateRequest
+    created_vehicle: VehicleResponse | None = None
+    message: str
+
+
