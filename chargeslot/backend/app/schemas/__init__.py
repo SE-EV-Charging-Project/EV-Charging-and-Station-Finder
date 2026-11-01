@@ -15,8 +15,10 @@ from app.schemas.user import (
 
 from app.schemas.vehicle import (
     VehicleCreateRequest,
+    VehicleUpdateRequest,
     VehicleResponse,
     VehicleListResponse,
+    VehicleDeleteResponse,
     VehicleValidationRulesResponse,
     VehicleValidationCheckRequest,
     VehicleValidationCheckResponse,
@@ -38,8 +40,10 @@ __all__ = [
     "MessageResponse",
     "UserResponse",
     "VehicleCreateRequest",
+    "VehicleUpdateRequest",
     "VehicleResponse",
     "VehicleListResponse",
+    "VehicleDeleteResponse",
     "VehicleValidationRulesResponse",
     "VehicleValidationCheckRequest",
     "VehicleValidationCheckResponse",

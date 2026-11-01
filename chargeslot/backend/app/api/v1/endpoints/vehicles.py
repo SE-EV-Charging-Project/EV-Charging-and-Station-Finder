@@ -6,8 +6,10 @@ from app.db.session import get_db
 from app.models.user import User
 from app.schemas.vehicle import (
     VehicleCreateRequest,
+    VehicleUpdateRequest,
     VehicleResponse,
     VehicleListResponse,
+    VehicleDeleteResponse,
     VehicleValidationRulesResponse,
     VehicleValidationCheckRequest,
     VehicleValidationCheckResponse,
@@ -123,3 +125,50 @@ def get_vehicle(
 ) -> VehicleResponse:
     vehicle = VehicleService.get_vehicle_by_id(db=db, vehicle_id=vehicle_id, user=current_user)
     return VehicleResponse.model_validate(vehicle)
+
+
+@router.patch(
+    "/{vehicle_id}",
+    response_model=VehicleResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Edit vehicle details",
+    description="Updates specifications or details of an existing vehicle (CS19-021 / REQ-F1-21)."
+)
+def update_vehicle(
+    vehicle_id: int,
+    payload: VehicleUpdateRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VehicleResponse:
+    client_ip = request.client.host if request.client else None
+    return VehicleService.update_vehicle(
+        db=db,
+        vehicle_id=vehicle_id,
+        user=current_user,
+        data=payload,
+        ip_address=client_ip,
+    )
+
+
+@router.delete(
+    "/{vehicle_id}",
+    response_model=VehicleDeleteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Remove vehicle",
+    description="Deletes a vehicle from the authenticated driver's account (CS19-021 / REQ-F1-21)."
+)
+def remove_vehicle(
+    vehicle_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VehicleDeleteResponse:
+    client_ip = request.client.host if request.client else None
+    return VehicleService.remove_vehicle(
+        db=db,
+        vehicle_id=vehicle_id,
+        user=current_user,
+        ip_address=client_ip,
+    )
+
