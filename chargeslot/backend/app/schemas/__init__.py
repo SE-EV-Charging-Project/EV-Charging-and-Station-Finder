@@ -27,6 +27,10 @@ from app.schemas.vehicle import (
     SetDefaultVehicleRequest,
     VehicleLimitAndDefaultResponse,
     SetDefaultVehicleResponse,
+    EVPresetModelResponse,
+    EVPresetListResponse,
+    ApplyPresetRequest,
+    ApplyPresetResponse,
 )
 
 __all__ = [
@@ -55,4 +59,8 @@ __all__ = [
     "SetDefaultVehicleRequest",
     "VehicleLimitAndDefaultResponse",
     "SetDefaultVehicleResponse",
+    "EVPresetModelResponse",
+    "EVPresetListResponse",
+    "ApplyPresetRequest",
+    "ApplyPresetResponse",
 ]

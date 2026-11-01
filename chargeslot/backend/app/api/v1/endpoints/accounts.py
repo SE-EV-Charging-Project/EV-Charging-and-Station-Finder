@@ -46,6 +46,10 @@ from app.schemas.vehicle import (
     SetDefaultVehicleRequest,
     VehicleLimitAndDefaultResponse,
     SetDefaultVehicleResponse,
+    EVPresetModelResponse,
+    EVPresetListResponse,
+    ApplyPresetRequest,
+    ApplyPresetResponse,
 )
 from app.services.admin_service import AdminService
 from app.services.audit_service import AuditService
@@ -715,6 +719,42 @@ def set_default_vehicle_account_post(
     )
 
 
+
+
+@router.get(
+    "/preset-ev-models",
+    response_model=EVPresetListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List preset EV models (architecture route)",
+    description="Matching SW Architecture Page 5: List common EV models for pre-filling specification fields (REQ-F1-23 / CS19-023)."
+)
+def list_preset_ev_models_account(
+    make: str | None = None,
+    connector_type: str | None = None,
+) -> EVPresetListResponse:
+    return VehicleService.list_presets(make=make, connector_type=connector_type)
+
+
+@router.post(
+    "/preset-ev-models",
+    response_model=ApplyPresetResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Apply preset EV models (architecture route)",
+    description="Matching SW Architecture Page 5: Select preset EV model to pre-fill specs and optionally save vehicle (REQ-F1-23 / CS19-023)."
+)
+def apply_preset_ev_model_account(
+    payload: ApplyPresetRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ApplyPresetResponse:
+    client_ip = request.client.host if request.client else None
+    return VehicleService.apply_preset(
+        db=db,
+        user=current_user,
+        data=payload,
+        ip_address=client_ip,
+    )
 
 
 @router.get(

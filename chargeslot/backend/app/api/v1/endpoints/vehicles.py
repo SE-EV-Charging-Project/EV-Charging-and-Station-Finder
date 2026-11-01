@@ -18,6 +18,10 @@ from app.schemas.vehicle import (
     SetDefaultVehicleRequest,
     VehicleLimitAndDefaultResponse,
     SetDefaultVehicleResponse,
+    EVPresetModelResponse,
+    EVPresetListResponse,
+    ApplyPresetRequest,
+    ApplyPresetResponse,
 )
 from app.services.vehicle_service import VehicleService
 
@@ -118,11 +122,58 @@ def set_vehicle_as_default(
 
 
 @router.get(
+    "/presets",
+    response_model=EVPresetListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List preset EV models",
+    description="Returns pre-configured catalog of popular EV models to pre-fill specifications (CS19-023 / REQ-F1-23)."
+)
+def list_preset_ev_models(
+    make: str | None = None,
+    connector_type: str | None = None,
+) -> EVPresetListResponse:
+    return VehicleService.list_presets(make=make, connector_type=connector_type)
+
+
+@router.get(
+    "/presets/{preset_id}",
+    response_model=EVPresetModelResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get preset EV model",
+    description="Fetches specification fields for a single preset EV model by ID (CS19-023 / REQ-F1-23)."
+)
+def get_preset_ev_model(preset_id: str) -> EVPresetModelResponse:
+    return VehicleService.get_preset(preset_id=preset_id)
+
+
+@router.post(
+    "/presets/apply",
+    response_model=ApplyPresetResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Apply preset EV model",
+    description="Pre-fills vehicle specs from a preset model and optionally registers it to the driver profile (CS19-023 / REQ-F1-23)."
+)
+def apply_preset_ev_model(
+    payload: ApplyPresetRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ApplyPresetResponse:
+    client_ip = request.client.host if request.client else None
+    return VehicleService.apply_preset(
+        db=db,
+        user=current_user,
+        data=payload,
+        ip_address=client_ip,
+    )
+
+
+@router.get(
     "/validation-rules",
     response_model=VehicleValidationRulesResponse,
     status_code=status.HTTP_200_OK,
     summary="Get vehicle validation rules",
-    description="Returns metadata specification rules and valid bounds for EV vehicles (REQ-F1-19 / CS19-019 / Appendix B.3)."
+    description="Returns metadata specification rules and valid bounds for EV vehicles (REQ-F1-19 / REQ-F1-24 / Appendix B.3)."
 )
 def get_vehicle_validation_rules() -> VehicleValidationRulesResponse:
     return VehicleService.get_validation_rules()
@@ -133,7 +184,7 @@ def get_vehicle_validation_rules() -> VehicleValidationRulesResponse:
     response_model=VehicleValidationCheckResponse,
     status_code=status.HTTP_200_OK,
     summary="Validate vehicle inputs",
-    description="Performs pre-save inline validation for vehicle values against Appendix B ranges (REQ-F1-19 / CS19-019)."
+    description="Performs pre-save inline validation for vehicle values against Appendix B ranges (REQ-F1-19 / REQ-F1-24 / Appendix B.3)."
 )
 def validate_vehicle(
     payload: VehicleValidationCheckRequest,

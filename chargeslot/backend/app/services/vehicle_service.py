@@ -17,8 +17,22 @@ from app.schemas.vehicle import (
     SetDefaultVehicleRequest,
     VehicleLimitAndDefaultResponse,
     SetDefaultVehicleResponse,
+    EVPresetModelResponse,
+    EVPresetListResponse,
+    ApplyPresetRequest,
+    ApplyPresetResponse,
 )
 from app.services.audit_service import AuditService
+from app.vehicles.presets import (
+    get_preset_models,
+    get_preset_by_id,
+    prefill_vehicle_specs,
+)
+from app.vehicles.validators import (
+    validate_vehicle_values,
+    enforce_vehicle_values,
+    get_appendix_b_rules,
+)
 
 
 class VehicleService:
@@ -59,6 +73,9 @@ class VehicleService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Driver has reached maximum limit of {VehicleService.MAX_VEHICLES_PER_DRIVER} vehicles (REQ-F1-22).",
             )
+
+        # Enforce Appendix B.3 validation ranges (REQ-F1-24 / CS19-024)
+        enforce_vehicle_values(data.model_dump())
 
         is_default = data.is_default
         if current_count == 0:
@@ -373,118 +390,110 @@ class VehicleService:
         """
         Returns metadata validation rules for EV vehicles (REQ-F1-19 / REQ-F1-24 / Appendix B.3).
         """
-        rules = {
-            "make": {
-                "required": True,
-                "min_length": 1,
-                "max_length": 40,
-                "description": "Vehicle make/manufacturer; cannot be empty.",
-            },
-            "model": {
-                "required": True,
-                "min_length": 1,
-                "max_length": 40,
-                "description": "Vehicle model name; cannot be empty.",
-            },
-            "battery_kwh": {
-                "required": True,
-                "min": 5.0,
-                "max": 250.0,
-                "unit": "kWh",
-                "description": "Usable battery capacity in kWh (5 to 250 kWh).",
-            },
-            "connector_type": {
-                "required": True,
-                "allowed_values": [ct.value for ct in ConnectorType],
-                "description": "Standardized charging connector type.",
-            },
-            "max_ac_kw": {
-                "required": True,
-                "min": 1.0,
-                "max": 50.0,
-                "unit": "kW",
-                "description": "Maximum onboard AC charging rate in kW (1 to 50 kW).",
-            },
-            "max_dc_kw": {
-                "required": False,
-                "default": 0.0,
-                "min_if_supported": 10.0,
-                "max": 400.0,
-                "unit": "kW",
-                "description": "Maximum DC fast charging rate in kW (0 if none, or 10 to 400 kW).",
-            },
-            "consumption_kwh_100km": {
-                "required": True,
-                "min": 5.0,
-                "max": 50.0,
-                "unit": "kWh/100km",
-                "description": "Vehicle energy consumption in kWh per 100 km (5 to 50 kWh/100km).",
-            },
-            "registration_no": {
-                "required": False,
-                "max_length": 15,
-                "description": "Vehicle registration or license plate number.",
-            },
-            "max_vehicles_per_driver": {
-                "max": VehicleService.MAX_VEHICLES_PER_DRIVER,
-                "description": "Maximum vehicles allowed per driver (REQ-F1-22).",
-            },
-        }
+        rules = get_appendix_b_rules()
         return VehicleValidationRulesResponse(rules=rules, status="success")
 
     @staticmethod
     def validate_vehicle_inputs(payload: VehicleValidationCheckRequest) -> VehicleValidationCheckResponse:
         """
-        Validate vehicle field values dynamically returning inline feedback (CS19-019 / REQ-F1-19).
+        Validate vehicle field values dynamically returning inline feedback (CS19-019 / REQ-F1-19 / REQ-F1-24).
         """
-        errors: dict[str, str] = {}
-
-        if payload.make is not None:
-            trimmed_make = payload.make.strip()
-            if not trimmed_make:
-                errors["make"] = "Vehicle make cannot be empty or blank."
-            elif len(trimmed_make) > 40:
-                errors["make"] = "Vehicle make cannot exceed 40 characters."
-
-        if payload.model is not None:
-            trimmed_model = payload.model.strip()
-            if not trimmed_model:
-                errors["model"] = "Vehicle model cannot be empty or blank."
-            elif len(trimmed_model) > 40:
-                errors["model"] = "Vehicle model cannot exceed 40 characters."
-
-        if payload.battery_kwh is not None:
-            if payload.battery_kwh < 5.0 or payload.battery_kwh > 250.0:
-                errors["battery_kwh"] = "Battery capacity must be between 5.0 and 250.0 kWh (Appendix B.3)."
-
-        if payload.connector_type is not None:
-            allowed = [ct.value for ct in ConnectorType]
-            if payload.connector_type not in allowed:
-                errors["connector_type"] = f"Invalid connector type. Allowed types: {', '.join(allowed)}."
-
-        if payload.max_ac_kw is not None:
-            if payload.max_ac_kw < 1.0 or payload.max_ac_kw > 50.0:
-                errors["max_ac_kw"] = "Maximum AC charging rate must be between 1.0 and 50.0 kW (Appendix B.3)."
-
-        if payload.max_dc_kw is not None:
-            if payload.max_dc_kw < 0.0 or (0.0 < payload.max_dc_kw < 10.0) or payload.max_dc_kw > 400.0:
-                errors["max_dc_kw"] = "Maximum DC charging rate must be 0 kW (unsupported) or between 10.0 and 400.0 kW (Appendix B.3)."
-
-        if payload.consumption_kwh_100km is not None:
-            if payload.consumption_kwh_100km < 5.0 or payload.consumption_kwh_100km > 50.0:
-                errors["consumption_kwh_100km"] = "Energy consumption must be between 5.0 and 50.0 kWh per 100 km (Appendix B.3)."
-
-        if payload.registration_no is not None:
-            trimmed_reg = payload.registration_no.strip()
-            if len(trimmed_reg) > 15:
-                errors["registration_no"] = "Registration number cannot exceed 15 characters."
-
-        is_valid = len(errors) == 0
-        message = "Vehicle validation successful. All fields are within valid ranges." if is_valid else "Vehicle validation failed with field errors."
-
+        data = payload.model_dump(exclude_unset=True)
+        is_valid, errors = validate_vehicle_values(data)
+        message = (
+            "Vehicle validation successful. All fields are within valid ranges."
+            if is_valid
+            else "Vehicle validation failed with field errors."
+        )
         return VehicleValidationCheckResponse(
             is_valid=is_valid,
             errors=errors,
+            message=message,
+        )
+
+    # ==========================================================================
+    # Preset EV Models Catalog (CS19-023 / REQ-F1-23 / vehicles/presets.py)
+    # ==========================================================================
+
+    @staticmethod
+    def list_presets(
+        make: str | None = None,
+        connector_type: str | None = None,
+    ) -> EVPresetListResponse:
+        """
+        Returns the catalog of common preset EV models with pre-filled specs (REQ-F1-23).
+        """
+        presets = get_preset_models(make=make, connector_type=connector_type)
+        items = [EVPresetModelResponse.model_validate(p) for p in presets]
+        return EVPresetListResponse(
+            total=len(items),
+            items=items,
+        )
+
+    @staticmethod
+    def get_preset(preset_id: str) -> EVPresetModelResponse:
+        """
+        Fetch a single preset EV model by ID / slug (REQ-F1-23).
+        """
+        preset = get_preset_by_id(preset_id)
+        if not preset:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Preset EV model '{preset_id}' not found.",
+            )
+        return EVPresetModelResponse.model_validate(preset)
+
+    @staticmethod
+    def apply_preset(
+        db: Session,
+        user: User,
+        data: ApplyPresetRequest,
+        ip_address: str | None = None,
+    ) -> ApplyPresetResponse:
+        """
+        Applies a preset EV model to pre-fill specification fields (REQ-F1-23).
+        If data.create_vehicle is True, additionally persists the new vehicle to the driver's garage.
+        """
+        preset = get_preset_by_id(data.preset_id)
+        if not preset:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Preset EV model '{data.preset_id}' not found.",
+            )
+
+        battery = data.custom_battery_kwh if data.custom_battery_kwh is not None else preset.battery_kwh
+        ac_kw = data.custom_max_ac_kw if data.custom_max_ac_kw is not None else preset.max_ac_kw
+        dc_kw = data.custom_max_dc_kw if data.custom_max_dc_kw is not None else preset.max_dc_kw
+        consumption = data.custom_consumption_kwh_100km if data.custom_consumption_kwh_100km is not None else preset.consumption_kwh_100km
+
+        spec = VehicleCreateRequest(
+            make=preset.make,
+            model=preset.model,
+            battery_kwh=battery,
+            connector_type=preset.connector_type,
+            max_ac_kw=ac_kw,
+            max_dc_kw=dc_kw,
+            consumption_kwh_100km=consumption,
+            registration_no=data.registration_no,
+            is_default=data.is_default,
+        )
+
+        created_vehicle: VehicleResponse | None = None
+        if data.create_vehicle:
+            created_vehicle = VehicleService.add_vehicle(
+                db=db,
+                user=user,
+                data=spec,
+                ip_address=ip_address,
+            )
+            message = f"Vehicle '{preset.make} {preset.model}' successfully added to your garage from preset."
+        else:
+            message = f"Specifications pre-filled successfully for '{preset.make} {preset.model}'."
+
+        return ApplyPresetResponse(
+            preset_id=preset.id,
+            prefilled_spec=spec,
+            created_vehicle=created_vehicle,
             message=message,
         )
 
