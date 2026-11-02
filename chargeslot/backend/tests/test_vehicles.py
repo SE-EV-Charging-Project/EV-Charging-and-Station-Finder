@@ -6,12 +6,14 @@ Test Case ID: TC-F1-18
 System Test Case ID: STC-F1-18
 """
 
+from datetime import datetime, timezone, timedelta
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle, ConnectorType
+from app.models.booking import Booking, BookingStatus
 from app.models.audit import AuditLog
 from app.utils.security import hash_password, create_access_token
 
@@ -1924,6 +1926,407 @@ def test_vehicle_create_and_update_strictly_enforce_appendix_b(client: TestClien
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp_bad_ac.status_code == 422
+
+
+# ==============================================================================
+# CS19-025 / REQ-F1-25: Protect Booked Vehicle (TC-F1-25 / STC-F1-25)
+# ==============================================================================
+
+def test_delete_vehicle_blocked_when_active_booking_exists(client: TestClient, db_session: Session, driver_user: User):
+    """TC-F1-25-01 / STC-F1-25-01: Vehicle cannot be deleted when linked to an active booking."""
+    token = make_token(driver_user)
+    # 1. Add vehicle
+    v_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Tata",
+            "model": "Nexon EV",
+            "battery_kwh": 40.5,
+            "connector_type": "CCS2",
+            "max_ac_kw": 7.2,
+            "max_dc_kw": 50.0,
+            "consumption_kwh_100km": 15.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert v_resp.status_code == 201
+    veh_id = v_resp.json()["id"]
+
+    # 2. Seed an ACTIVE booking linked to this vehicle
+    now = datetime.now(timezone.utc)
+    booking = Booking(
+        user_id=driver_user.id,
+        vehicle_id=veh_id,
+        status=BookingStatus.ACTIVE,
+        start_time=now,
+        end_time=now + timedelta(hours=1),
+    )
+    db_session.add(booking)
+    db_session.commit()
+
+    # 3. Attempt to delete vehicle via REST endpoint -> rejected with 400
+    del_resp = client.delete(
+        f"/api/v1/vehicles/{veh_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert del_resp.status_code == 400
+    assert "active or upcoming booking" in del_resp.json()["detail"].lower()
+    assert "REQ-F1-25" in del_resp.json()["detail"]
+
+    # 4. Attempt to delete via architecture route DELETE /api/v1/accounts/vehicle-crud -> rejected with 400
+    del_arch = client.delete(
+        f"/api/v1/accounts/vehicle-crud?vehicle_id={veh_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert del_arch.status_code == 400
+    assert "active or upcoming booking" in del_arch.json()["detail"].lower()
+
+    # 5. Verify vehicle still persists in DB
+    check_veh = db_session.query(Vehicle).filter(Vehicle.id == veh_id).first()
+    assert check_veh is not None
+
+
+def test_delete_vehicle_blocked_when_upcoming_booking_exists(client: TestClient, db_session: Session, driver_user: User):
+    """TC-F1-25-02: Vehicle cannot be deleted when linked to an upcoming CONFIRMED or HELD booking."""
+    token = make_token(driver_user)
+    v_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "MG",
+            "model": "ZS EV",
+            "battery_kwh": 50.3,
+            "connector_type": "CCS2",
+            "max_ac_kw": 7.4,
+            "max_dc_kw": 50.0,
+            "consumption_kwh_100km": 16.5,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert v_resp.status_code == 201
+    veh_id = v_resp.json()["id"]
+
+    # Seed upcoming CONFIRMED booking
+    now = datetime.now(timezone.utc)
+    booking = Booking(
+        user_id=driver_user.id,
+        vehicle_id=veh_id,
+        status=BookingStatus.CONFIRMED,
+        start_time=now + timedelta(days=1),
+        end_time=now + timedelta(days=1, hours=1),
+    )
+    db_session.add(booking)
+    db_session.commit()
+
+    del_resp = client.delete(
+        f"/api/v1/vehicles/{veh_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert del_resp.status_code == 400
+    assert "REQ-F1-25" in del_resp.json()["detail"]
+
+
+def test_protect_booked_vehicle_inspection_endpoints(client: TestClient, db_session: Session, driver_user: User):
+    """TC-F1-25-03: Inspect vehicle protection status via REST and SW Architecture routes."""
+    token = make_token(driver_user)
+    v_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Hyundai",
+            "model": "Ioniq 5",
+            "battery_kwh": 72.6,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 350.0,
+            "consumption_kwh_100km": 17.0,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    veh_id = v_resp.json()["id"]
+
+    # Initially no bookings -> can_delete=True, is_protected=False
+    resp_init = client.get(
+        f"/api/v1/vehicles/{veh_id}/booking-protection",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_init.status_code == 200
+    assert resp_init.json()["is_protected"] is False
+    assert resp_init.json()["can_delete"] is True
+    assert resp_init.json()["active_booking_count"] == 0
+
+    # Add active booking
+    now = datetime.now(timezone.utc)
+    booking = Booking(
+        user_id=driver_user.id,
+        vehicle_id=veh_id,
+        status=BookingStatus.ACTIVE,
+        start_time=now,
+        end_time=now + timedelta(hours=1),
+    )
+    db_session.add(booking)
+    db_session.commit()
+
+    # Query via SW Architecture route POST /api/v1/accounts/protect-booked-vehicle
+    resp_arch = client.post(
+        "/api/v1/accounts/protect-booked-vehicle",
+        json={"vehicle_id": veh_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_arch.status_code == 200
+    arch_data = resp_arch.json()
+    assert arch_data["is_protected"] is True
+    assert arch_data["can_delete"] is False
+    assert arch_data["active_booking_count"] == 1
+    assert arch_data["active_bookings"][0]["id"] == booking.id
+
+    # Query via GET /api/v1/accounts/protect-booked-vehicle/{vehicle_id}
+    resp_arch_get = client.get(
+        f"/api/v1/accounts/protect-booked-vehicle/{veh_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_arch_get.status_code == 200
+    assert resp_arch_get.json()["is_protected"] is True
+
+
+def test_delete_vehicle_allowed_with_completed_or_cancelled_bookings(client: TestClient, db_session: Session, driver_user: User):
+    """TC-F1-25-04: Vehicles with only completed or cancelled bookings can be deleted safely."""
+    token = make_token(driver_user)
+    v_resp = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Mahindra",
+            "model": "XUV400",
+            "battery_kwh": 39.4,
+            "connector_type": "CCS2",
+            "max_ac_kw": 7.2,
+            "max_dc_kw": 50.0,
+            "consumption_kwh_100km": 15.5,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    veh_id = v_resp.json()["id"]
+
+    # Seed COMPLETED and CANCELLED bookings
+    now = datetime.now(timezone.utc)
+    b1 = Booking(
+        user_id=driver_user.id,
+        vehicle_id=veh_id,
+        status=BookingStatus.COMPLETED,
+        start_time=now - timedelta(days=2),
+        end_time=now - timedelta(days=2, hours=1),
+    )
+    b2 = Booking(
+        user_id=driver_user.id,
+        vehicle_id=veh_id,
+        status=BookingStatus.CANCELLED,
+        start_time=now - timedelta(days=1),
+        end_time=now - timedelta(days=1, hours=1),
+    )
+    db_session.add_all([b1, b2])
+    db_session.commit()
+
+    # Deletion should succeed
+    del_resp = client.delete(
+        f"/api/v1/vehicles/{veh_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert del_resp.status_code == 200
+    assert "successfully removed" in del_resp.json()["message"]
+
+
+# ==============================================================================
+# CS19-026 / REQ-F1-26: Driver Sees Own Data Only (TC-F1-26 / STC-F1-26)
+# ==============================================================================
+
+def test_driver_data_scope_own_data_accessible(client: TestClient, driver_user: User, other_driver: User):
+    """TC-F1-26-01 / STC-F1-26-01: Driver can view their own tenancy scope and vehicles."""
+    token1 = make_token(driver_user)
+    token2 = make_token(other_driver)
+
+    # Driver 1 registers a vehicle
+    r1 = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Tesla",
+            "model": "Model 3",
+            "battery_kwh": 60.0,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 170.0,
+            "consumption_kwh_100km": 14.5,
+        },
+        headers={"Authorization": f"Bearer {token1}"},
+    )
+    veh1_id = r1.json()["id"]
+
+    # Driver 2 registers a vehicle
+    r2 = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Kia",
+            "model": "EV6",
+            "battery_kwh": 77.4,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 350.0,
+            "consumption_kwh_100km": 16.5,
+        },
+        headers={"Authorization": f"Bearer {token2}"},
+    )
+    veh2_id = r2.json()["id"]
+
+    # Driver 1 calls /api/v1/accounts/driver-sees-own-data-only
+    resp1 = client.get(
+        "/api/v1/accounts/driver-sees-own-data-only",
+        headers={"Authorization": f"Bearer {token1}"},
+    )
+    assert resp1.status_code == 200
+    d1 = resp1.json()
+    assert d1["user_id"] == driver_user.id
+    assert veh1_id in d1["accessible_vehicle_ids"]
+    assert veh2_id not in d1["accessible_vehicle_ids"]
+
+    # Driver 2 calls /api/v1/accounts/driver-sees-own-data-only
+    resp2 = client.get(
+        "/api/v1/accounts/driver-sees-own-data-only",
+        headers={"Authorization": f"Bearer {token2}"},
+    )
+    assert resp2.status_code == 200
+    d2 = resp2.json()
+    assert d2["user_id"] == other_driver.id
+    assert veh2_id in d2["accessible_vehicle_ids"]
+    assert veh1_id not in d2["accessible_vehicle_ids"]
+
+
+def test_driver_blocked_from_other_driver_resources(client: TestClient, driver_user: User, other_driver: User):
+    """TC-F1-26-02: Tenancy isolation strictly denies viewing or modifying foreign driver data with 403."""
+    token1 = make_token(driver_user)
+    token2 = make_token(other_driver)
+
+    # Driver 2 owns a vehicle
+    r2 = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "Nissan",
+            "model": "Leaf",
+            "battery_kwh": 40.0,
+            "connector_type": "CHAdeMO",
+            "max_ac_kw": 6.6,
+            "max_dc_kw": 50.0,
+            "consumption_kwh_100km": 17.0,
+        },
+        headers={"Authorization": f"Bearer {token2}"},
+    )
+    foreign_veh_id = r2.json()["id"]
+
+    # 1. Driver 1 cannot inspect Driver 2's data scope
+    resp_scope_probe = client.get(
+        f"/api/v1/accounts/driver-sees-own-data-only?target_user_id={other_driver.id}",
+        headers={"Authorization": f"Bearer {token1}"},
+    )
+    assert resp_scope_probe.status_code == 403
+    assert "REQ-F1-26" in resp_scope_probe.json()["detail"]
+
+    # 2. Driver 1 cannot view Driver 2's vehicle
+    resp_get = client.get(
+        f"/api/v1/vehicles/{foreign_veh_id}",
+        headers={"Authorization": f"Bearer {token1}"},
+    )
+    assert resp_get.status_code == 403
+    assert "REQ-F1-26" in resp_get.json()["detail"]
+
+    # 3. Driver 1 cannot edit Driver 2's vehicle
+    resp_patch = client.patch(
+        f"/api/v1/vehicles/{foreign_veh_id}",
+        json={"make": "TamperedMake"},
+        headers={"Authorization": f"Bearer {token1}"},
+    )
+    assert resp_patch.status_code == 403
+
+    # 4. Driver 1 cannot delete Driver 2's vehicle
+    resp_del = client.delete(
+        f"/api/v1/vehicles/{foreign_veh_id}",
+        headers={"Authorization": f"Bearer {token1}"},
+    )
+    assert resp_del.status_code == 403
+
+    # 5. Driver 1 cannot view summary card of Driver 2's vehicle
+    resp_summary = client.get(
+        f"/api/v1/vehicles/{foreign_veh_id}/summary",
+        headers={"Authorization": f"Bearer {token1}"},
+    )
+    assert resp_summary.status_code == 403
+
+    # 6. Driver 1 cannot set default on Driver 2's vehicle
+    resp_default = client.patch(
+        f"/api/v1/vehicles/{foreign_veh_id}/set-default",
+        headers={"Authorization": f"Bearer {token1}"},
+    )
+    assert resp_default.status_code == 403
+
+    # 7. Driver 1 cannot check booking protection on Driver 2's vehicle
+    resp_prot = client.get(
+        f"/api/v1/vehicles/{foreign_veh_id}/booking-protection",
+        headers={"Authorization": f"Bearer {token1}"},
+    )
+    assert resp_prot.status_code == 403
+
+
+def test_admin_global_access_and_operator_denied(client: TestClient, db_session: Session, driver_user: User, operator_user: User):
+    """TC-F1-26-03: Administrators have global scope; Station Operators cannot access driver vehicles."""
+    # Create admin
+    admin = User(
+        name="Chief Admin",
+        email="chief.admin@example.com",
+        phone="+15556667779",
+        hashed_password=hash_password("AdminPass123!"),
+        role=UserRole.ADMIN,
+        is_verified=True,
+        is_active=True,
+    )
+    db_session.add(admin)
+    db_session.commit()
+    admin_token = make_token(admin)
+    driver_token = make_token(driver_user)
+    op_token = make_token(operator_user)
+
+    # Driver adds vehicle
+    r = client.post(
+        "/api/v1/vehicles",
+        json={
+            "make": "BMW",
+            "model": "i4",
+            "battery_kwh": 83.9,
+            "connector_type": "CCS2",
+            "max_ac_kw": 11.0,
+            "max_dc_kw": 205.0,
+            "consumption_kwh_100km": 18.0,
+        },
+        headers={"Authorization": f"Bearer {driver_token}"},
+    )
+    veh_id = r.json()["id"]
+
+    # Admin CAN view driver's vehicle
+    admin_get = client.get(
+        f"/api/v1/vehicles/{veh_id}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert admin_get.status_code == 200
+    assert admin_get.json()["id"] == veh_id
+
+    # Admin CAN query driver's tenancy scope
+    admin_scope = client.get(
+        f"/api/v1/accounts/driver-sees-own-data-only?target_user_id={driver_user.id}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert admin_scope.status_code == 200
+
+    # Station Operator CANNOT view driver's vehicle
+    op_get = client.get(
+        f"/api/v1/vehicles/{veh_id}",
+        headers={"Authorization": f"Bearer {op_token}"},
+    )
+    assert op_get.status_code == 403
+
 
 
 

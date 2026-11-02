@@ -22,6 +22,7 @@ from app.schemas.vehicle import (
     EVPresetListResponse,
     ApplyPresetRequest,
     ApplyPresetResponse,
+    ProtectBookedVehicleResponse,
 )
 from app.services.vehicle_service import VehicleService
 
@@ -282,4 +283,24 @@ def remove_vehicle(
         user=current_user,
         ip_address=client_ip,
     )
+
+
+@router.get(
+    "/{vehicle_id}/booking-protection",
+    response_model=ProtectBookedVehicleResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get vehicle booking protection status",
+    description="Inspects whether a vehicle is protected from deletion due to active or upcoming bookings (REQ-F1-25 / CS19-025)."
+)
+def get_vehicle_booking_protection(
+    vehicle_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProtectBookedVehicleResponse:
+    return VehicleService.get_booking_protection_status(
+        db=db,
+        vehicle_id=vehicle_id,
+        user=current_user,
+    )
+
 

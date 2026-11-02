@@ -1,8 +1,11 @@
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.permissions import enforce_driver_scope, scope_driver_query
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle, ConnectorType
+from app.models.booking import Booking, BookingStatus
+from app.schemas.user import DriverDataScopeResponse
 from app.schemas.vehicle import (
     VehicleCreateRequest,
     VehicleUpdateRequest,
@@ -21,6 +24,9 @@ from app.schemas.vehicle import (
     EVPresetListResponse,
     ApplyPresetRequest,
     ApplyPresetResponse,
+    ActiveBookingInfo,
+    ProtectBookedVehicleRequest,
+    ProtectBookedVehicleResponse,
 )
 from app.services.audit_service import AuditService
 from app.vehicles.presets import (
@@ -117,8 +123,9 @@ class VehicleService:
         """
         List all vehicles owned by the authenticated driver (REQ-F1-26).
         """
-        query = db.query(Vehicle).filter(Vehicle.user_id == user.id).order_by(Vehicle.is_default.desc(), Vehicle.created_at.desc())
-        vehicles = query.all()
+        query = db.query(Vehicle)
+        query = scope_driver_query(query=query, model=Vehicle, current_user=user)
+        vehicles = query.order_by(Vehicle.is_default.desc(), Vehicle.created_at.desc()).all()
         return VehicleListResponse(
             total=len(vehicles),
             items=[VehicleResponse.model_validate(v) for v in vehicles],
@@ -135,11 +142,7 @@ class VehicleService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Vehicle with ID {vehicle_id} not found.",
             )
-        if vehicle.user_id != user.id and user.role != UserRole.ADMIN:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied: You do not have permission to access this vehicle (REQ-F1-26).",
-            )
+        enforce_driver_scope(current_user=user, resource_user_id=vehicle.user_id)
         return vehicle
 
     @staticmethod
@@ -266,6 +269,66 @@ class VehicleService:
         return VehicleResponse.model_validate(vehicle)
 
     @staticmethod
+    def check_vehicle_booking_protection(
+        db: Session,
+        vehicle_id: int,
+    ) -> tuple[bool, list[Booking]]:
+        """
+        Checks whether a vehicle is linked to any upcoming or active bookings (REQ-F1-25 / CS19-025).
+        Active/upcoming bookings have status in {HELD, CONFIRMED, ACTIVE}.
+        """
+        active_statuses = [
+            BookingStatus.HELD,
+            BookingStatus.CONFIRMED,
+            BookingStatus.ACTIVE,
+        ]
+        bookings = (
+            db.query(Booking)
+            .filter(
+                Booking.vehicle_id == vehicle_id,
+                Booking.status.in_(active_statuses),
+            )
+            .order_by(Booking.start_time.asc())
+            .all()
+        )
+        is_protected = len(bookings) > 0
+        return is_protected, bookings
+
+    @staticmethod
+    def get_booking_protection_status(
+        db: Session,
+        vehicle_id: int,
+        user: User,
+    ) -> ProtectBookedVehicleResponse:
+        """
+        Inspect whether a vehicle is protected from deletion due to active or upcoming bookings (REQ-F1-25 / CS19-025).
+        """
+        vehicle = VehicleService.get_vehicle_by_id(db=db, vehicle_id=vehicle_id, user=user)
+        is_protected, active_bookings = VehicleService.check_vehicle_booking_protection(db=db, vehicle_id=vehicle.id)
+        booking_infos = [
+            ActiveBookingInfo(
+                id=b.id,
+                status=b.status.value if hasattr(b.status, "value") else str(b.status),
+                start_time=b.start_time,
+                end_time=b.end_time,
+            )
+            for b in active_bookings
+        ]
+        message = (
+            f"Vehicle '{vehicle.make} {vehicle.model}' is protected from deletion: {len(active_bookings)} active/upcoming booking(s) exist (REQ-F1-25)."
+            if is_protected
+            else f"Vehicle '{vehicle.make} {vehicle.model}' has no active bookings and can be safely removed."
+        )
+        return ProtectBookedVehicleResponse(
+            vehicle_id=vehicle.id,
+            is_protected=is_protected,
+            can_delete=not is_protected,
+            active_booking_count=len(active_bookings),
+            active_bookings=booking_infos,
+            message=message,
+        )
+
+    @staticmethod
     def remove_vehicle(
         db: Session,
         vehicle_id: int,
@@ -274,9 +337,20 @@ class VehicleService:
     ) -> VehicleDeleteResponse:
         """
         Remove/delete a vehicle owned by the authenticated driver (CS19-021 / REQ-F1-21).
-        Enforces driver ownership, handles fallback default assignment, and logs audit events.
+        Enforces driver ownership (REQ-F1-26), prevents deleting booked vehicles (REQ-F1-25),
+        handles fallback default assignment (REQ-F1-22), and logs audit events.
         """
         vehicle = VehicleService.get_vehicle_by_id(db=db, vehicle_id=vehicle_id, user=user)
+
+        # Protect booked vehicle (REQ-F1-25 / CS19-025)
+        is_protected, active_bookings = VehicleService.check_vehicle_booking_protection(db=db, vehicle_id=vehicle.id)
+        if is_protected:
+            booking = active_bookings[0]
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot delete vehicle: It is linked to an active or upcoming booking (Booking #{booking.id}, status: '{booking.status.value}') (REQ-F1-25).",
+            )
+
         was_default = vehicle.is_default
         veh_info = f"{vehicle.make} {vehicle.model} (ID: {vehicle.id})"
 
@@ -561,11 +635,43 @@ class VehicleService:
     @staticmethod
     def list_vehicle_summaries(db: Session, user: User) -> VehicleSummaryCardListResponse:
         """
-        List summary cards for all vehicles of the authenticated driver (REQ-F1-20).
+        List summary cards for all vehicles of the authenticated driver (REQ-F1-20 / REQ-F1-26).
         """
-        vehicles = db.query(Vehicle).filter(Vehicle.user_id == user.id).order_by(Vehicle.is_default.desc(), Vehicle.created_at.desc()).all()
+        query = db.query(Vehicle)
+        query = scope_driver_query(query=query, model=Vehicle, current_user=user)
+        vehicles = query.order_by(Vehicle.is_default.desc(), Vehicle.created_at.desc()).all()
         cards = [VehicleService.build_summary_card(v) for v in vehicles]
         return VehicleSummaryCardListResponse(
             total=len(cards),
             items=cards,
+        )
+
+    # ==========================================================================
+    # Driver Tenancy Isolation Scope (CS19-026 / REQ-F1-26)
+    # ==========================================================================
+
+    @staticmethod
+    def get_driver_data_scope(
+        db: Session,
+        user: User,
+        target_user_id: int | None = None,
+    ) -> DriverDataScopeResponse:
+        """
+        Verify that a driver can view only their own profile and vehicles (REQ-F1-26 / CS19-026).
+        Denies access with HTTP 403 Forbidden if a driver attempts to inspect another user's scope.
+        """
+        if target_user_id is not None and target_user_id != user.id:
+            enforce_driver_scope(current_user=user, resource_user_id=target_user_id)
+
+        vehicles = db.query(Vehicle).filter(Vehicle.user_id == user.id).all()
+        vehicle_ids = [v.id for v in vehicles]
+
+        return DriverDataScopeResponse(
+            user_id=user.id,
+            role=user.role.value if hasattr(user.role, "value") else str(user.role),
+            email=user.email,
+            accessible_vehicle_ids=vehicle_ids,
+            total_vehicles=len(vehicle_ids),
+            tenancy_status="isolated",
+            message="Driver data isolation verified: only own profile and vehicles accessible (REQ-F1-26).",
         )

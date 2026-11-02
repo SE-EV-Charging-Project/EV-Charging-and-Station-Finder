@@ -400,6 +400,21 @@ class ProfileValidationRulesResponse(BaseModel):
     status: str = "success"
 
 
+# ==============================================================================
+# Driver Data Scope Schemas (CS19-026 / REQ-F1-26)
+# ==============================================================================
+
+class DriverDataScopeResponse(BaseModel):
+    user_id: int
+    role: str
+    email: str
+    accessible_vehicle_ids: list[int]
+    total_vehicles: int
+    tenancy_status: str = "isolated"
+    message: str
+
+
+
 
 
 

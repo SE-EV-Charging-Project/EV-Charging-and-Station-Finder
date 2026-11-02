@@ -65,6 +65,51 @@ def scope_operator_query(
     )
 
 
+def enforce_driver_scope(current_user: User, resource_user_id: int) -> bool:
+    """
+    Enforces Driver tenancy isolation rule per SRS REQ-F1-26 / CS19-026:
+    'The system shall ensure that a driver can view and modify only their own profile and vehicles.'
+
+    - Administrators have global scope across user profiles and vehicles.
+    - Drivers can only access resources where resource_user_id == current_user.id.
+    - Foreign drivers or other roles are denied with HTTP 403 Forbidden.
+    """
+    if current_user.role == UserRole.ADMIN:
+        return True
+
+    if current_user.id == resource_user_id:
+        return True
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Access denied: Drivers can view and modify only their own profile and vehicles (REQ-F1-26).",
+    )
+
+
+def scope_driver_query(
+    query: Query,
+    model: type,
+    current_user: User,
+    user_id_attr: str = "user_id",
+) -> Query:
+    """
+    Filters a SQLAlchemy query by the current user's driver tenancy scope (REQ-F1-26).
+    - If Admin: returns query unaltered.
+    - If Driver: filters by user_id == current_user.id.
+    - If Other: raises HTTP 403 Forbidden.
+    """
+    if current_user.role == UserRole.ADMIN:
+        return query
+
+    if current_user.role == UserRole.DRIVER:
+        return query.filter(getattr(model, user_id_attr) == current_user.id)
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Insufficient permissions: Driver or Administrator role required.",
+    )
+
+
 def authorize(
     principal: User,
     action: str,
@@ -118,5 +163,7 @@ __all__ = [
     "require_driver",
     "enforce_operator_scope",
     "scope_operator_query",
+    "enforce_driver_scope",
+    "scope_driver_query",
     "authorize",
 ]

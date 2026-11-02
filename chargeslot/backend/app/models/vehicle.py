@@ -49,3 +49,4 @@ class Vehicle(Base):
     )
 
     user = relationship("User", back_populates="vehicles")
+    bookings = relationship("Booking", back_populates="vehicle")
