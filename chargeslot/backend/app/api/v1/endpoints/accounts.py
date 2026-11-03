@@ -31,6 +31,7 @@ from app.schemas.user import (
     ProfileValidationCheckRequest,
     ProfileValidationCheckResponse,
     ProfileValidationRulesResponse,
+    DriverDataScopeResponse,
 )
 from app.schemas.vehicle import (
     VehicleCreateRequest,
@@ -50,6 +51,8 @@ from app.schemas.vehicle import (
     EVPresetListResponse,
     ApplyPresetRequest,
     ApplyPresetResponse,
+    ProtectBookedVehicleRequest,
+    ProtectBookedVehicleResponse,
 )
 from app.services.admin_service import AdminService
 from app.services.audit_service import AuditService
@@ -640,6 +643,28 @@ def update_vehicle_crud(
 
 
 @router.delete(
+    "/vehicle-crud",
+    response_model=VehicleDeleteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Remove vehicle via query parameter (architecture route)",
+    description="Matching SW Architecture Page 5: Remove a vehicle from driver's profile (REQ-F1-21 / CS19-021)."
+)
+def remove_vehicle_crud_query(
+    vehicle_id: int = Query(..., description="ID of the vehicle to remove"),
+    request: Request = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VehicleDeleteResponse:
+    client_ip = request.client.host if request and request.client else None
+    return VehicleService.remove_vehicle(
+        db=db,
+        vehicle_id=vehicle_id,
+        user=current_user,
+        ip_address=client_ip,
+    )
+
+
+@router.delete(
     "/vehicle-crud/{vehicle_id}",
     response_model=VehicleDeleteResponse,
     status_code=status.HTTP_200_OK,
@@ -809,6 +834,72 @@ def get_vehicle_summary_card_account(
     db: Session = Depends(get_db),
 ) -> VehicleSummaryCardResponse:
     return VehicleService.get_vehicle_summary(db=db, vehicle_id=vehicle_id, user=current_user)
+
+
+# ==============================================================================
+# Protect Booked Vehicle Endpoints (CS19-025 / REQ-F1-25)
+# ==============================================================================
+
+@router.post(
+    "/protect-booked-vehicle",
+    response_model=ProtectBookedVehicleResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Protect booked vehicle (architecture route)",
+    description="Matching SW Architecture Page 5: Check whether a vehicle is linked to active/upcoming bookings before deletion (REQ-F1-25 / CS19-025)."
+)
+def protect_booked_vehicle_account(
+    payload: ProtectBookedVehicleRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProtectBookedVehicleResponse:
+    return VehicleService.get_booking_protection_status(
+        db=db,
+        vehicle_id=payload.vehicle_id,
+        user=current_user,
+    )
+
+
+@router.get(
+    "/protect-booked-vehicle/{vehicle_id}",
+    response_model=ProtectBookedVehicleResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get vehicle booking protection status (architecture route)",
+    description="Matching SW Architecture Page 5 GET alias: Inspect whether a vehicle is linked to active/upcoming bookings (REQ-F1-25 / CS19-025)."
+)
+def get_protect_booked_vehicle_account(
+    vehicle_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProtectBookedVehicleResponse:
+    return VehicleService.get_booking_protection_status(
+        db=db,
+        vehicle_id=vehicle_id,
+        user=current_user,
+    )
+
+
+# ==============================================================================
+# Driver Sees Own Data Only Endpoints (CS19-026 / REQ-F1-26)
+# ==============================================================================
+
+@router.get(
+    "/driver-sees-own-data-only",
+    response_model=DriverDataScopeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Driver sees own data only (architecture route)",
+    description="Matching SW Architecture Page 5: Verify driver tenancy isolation; access to other drivers' data is denied (REQ-F1-26 / CS19-026)."
+)
+def driver_sees_own_data_only(
+    target_user_id: int | None = Query(None, description="Optional target user ID to verify tenancy barrier"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> DriverDataScopeResponse:
+    return VehicleService.get_driver_data_scope(
+        db=db,
+        user=current_user,
+        target_user_id=target_user_id,
+    )
+
 
 
 

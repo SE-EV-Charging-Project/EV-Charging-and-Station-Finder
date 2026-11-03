@@ -11,6 +11,7 @@ from app.schemas.user import (
     LogoutRequest,
     MessageResponse,
     UserResponse,
+    DriverDataScopeResponse,
 )
 
 from app.schemas.vehicle import (
@@ -31,6 +32,9 @@ from app.schemas.vehicle import (
     EVPresetListResponse,
     ApplyPresetRequest,
     ApplyPresetResponse,
+    ActiveBookingInfo,
+    ProtectBookedVehicleRequest,
+    ProtectBookedVehicleResponse,
 )
 
 __all__ = [
@@ -46,6 +50,7 @@ __all__ = [
     "LogoutRequest",
     "MessageResponse",
     "UserResponse",
+    "DriverDataScopeResponse",
     "VehicleCreateRequest",
     "VehicleUpdateRequest",
     "VehicleResponse",
@@ -63,4 +68,7 @@ __all__ = [
     "EVPresetListResponse",
     "ApplyPresetRequest",
     "ApplyPresetResponse",
+    "ActiveBookingInfo",
+    "ProtectBookedVehicleRequest",
+    "ProtectBookedVehicleResponse",
 ]

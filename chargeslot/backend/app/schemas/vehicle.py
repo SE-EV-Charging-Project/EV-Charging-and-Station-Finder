@@ -245,3 +245,30 @@ class ApplyPresetResponse(BaseModel):
     message: str
 
 
+# ==============================================================================
+# Protect Booked Vehicle Schemas (CS19-025 / REQ-F1-25)
+# ==============================================================================
+
+class ActiveBookingInfo(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: str
+    start_time: datetime
+    end_time: datetime
+
+
+class ProtectBookedVehicleRequest(BaseModel):
+    vehicle_id: int = Field(..., description="ID of the vehicle to check or attempt deletion with booking protection")
+
+
+class ProtectBookedVehicleResponse(BaseModel):
+    vehicle_id: int
+    is_protected: bool
+    can_delete: bool
+    active_booking_count: int
+    active_bookings: list[ActiveBookingInfo] = []
+    message: str
+
+
+
