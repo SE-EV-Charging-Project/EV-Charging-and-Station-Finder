@@ -68,3 +68,4 @@ class Station(Base):
     operator = relationship("User", foreign_keys=[operator_id], back_populates="stations")
     reviewer = relationship("User", foreign_keys=[reviewed_by_admin_id])
     chargers = relationship("Charger", back_populates="station", cascade="all, delete-orphan")
+    maintenance_windows = relationship("MaintenanceWindow", back_populates="station", cascade="all, delete-orphan")

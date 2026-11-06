@@ -70,6 +70,16 @@ from app.schemas.charger import (
     StationOutOfServiceMarkingRequest,
 )
 
+from app.schemas.maintenance import (
+    MaintenanceWindowCreateRequest,
+    MaintenanceWindowUpdateRequest,
+    MaintenanceWindowResponse,
+    MaintenanceWindowListResponse,
+    SlotItem,
+    SlotAvailabilityCheckRequest,
+    SlotAvailabilityCheckResponse,
+)
+
 __all__ = [
     "UserRegisterRequest",
     "UserLoginRequest",
@@ -131,4 +141,11 @@ __all__ = [
     "ChargerReturnToServiceRequest",
     "ChargerOutOfServiceResponse",
     "StationOutOfServiceMarkingRequest",
+    "MaintenanceWindowCreateRequest",
+    "MaintenanceWindowUpdateRequest",
+    "MaintenanceWindowResponse",
+    "MaintenanceWindowListResponse",
+    "SlotItem",
+    "SlotAvailabilityCheckRequest",
+    "SlotAvailabilityCheckResponse",
 ]

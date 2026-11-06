@@ -25,8 +25,13 @@ from app.schemas.charger import (
     StationOutOfServiceMarkingRequest,
     ChargerOutOfServiceResponse,
 )
+from app.schemas.maintenance import (
+    MaintenanceWindowResponse,
+    MaintenanceWindowListResponse,
+)
 from app.services.station_service import StationService
 from app.services.charger_service import ChargerService
+from app.services.maintenance_service import MaintenanceService
 
 router = APIRouter(prefix="/stations", tags=["Stations"])
 
@@ -354,6 +359,36 @@ def get_station_out_of_service_marking(
     )
     return ChargerOutOfServiceResponse(**data)
 
+
+@router.get(
+    "/maintenance-windows",
+    response_model=MaintenanceWindowListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List maintenance windows across stations (SW Architecture Route)",
+    description="Matching SW Architecture Page 6: Query maintenance windows across stations (REQ-F2-06 / CS19-032).",
+)
+def get_station_maintenance_windows(
+    station_id: int | None = Query(None, description="Filter by station ID"),
+    charger_id: int | None = Query(None, description="Filter by charger ID"),
+    active_only: bool = Query(False, description="Filter active/upcoming windows"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MaintenanceWindowListResponse:
+    total, items = MaintenanceService.list_maintenance_windows(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        charger_id=charger_id,
+        active_only=active_only,
+        skip=skip,
+        limit=limit,
+    )
+    return MaintenanceWindowListResponse(
+        total=total,
+        items=[MaintenanceWindowResponse.model_validate(w) for w in items],
+    )
 
 
 @router.get(
