@@ -8,6 +8,7 @@ from app.stations.validators import (
     get_station_validation_rules,
 )
 from app.stations.chargers import ChargerService
+from app.stations.moderation import StationModerationService
 
 __all__ = [
     "APPENDIX_B_STATION_RULES",
@@ -18,5 +19,6 @@ __all__ = [
     "enforce_charger_values",
     "get_station_validation_rules",
     "ChargerService",
+    "StationModerationService",
 ]
 

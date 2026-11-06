@@ -48,6 +48,10 @@ from app.schemas.station import (
     StationValidationCheckResponse,
     ChargerValidationCheckRequest,
     ChargerValidationCheckResponse,
+    StationRejectRequest,
+    StationApprovalResponse,
+    StationApprovalGateStatusResponse,
+    StationApprovalGateActionRequest,
 )
 
 from app.schemas.charger import (
@@ -106,6 +110,10 @@ __all__ = [
     "StationValidationCheckResponse",
     "ChargerValidationCheckRequest",
     "ChargerValidationCheckResponse",
+    "StationRejectRequest",
+    "StationApprovalResponse",
+    "StationApprovalGateStatusResponse",
+    "StationApprovalGateActionRequest",
     "ConnectorCreateRequest",
     "ConnectorUpdateRequest",
     "ConnectorResponse",
