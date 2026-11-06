@@ -37,6 +37,14 @@ from app.schemas.vehicle import (
     ProtectBookedVehicleResponse,
 )
 
+from app.schemas.station import (
+    StationCreateRequest,
+    StationUpdateRequest,
+    StationResponse,
+    StationListResponse,
+    StationDeactivateResponse,
+)
+
 __all__ = [
     "UserRegisterRequest",
     "UserLoginRequest",
@@ -71,4 +79,9 @@ __all__ = [
     "ActiveBookingInfo",
     "ProtectBookedVehicleRequest",
     "ProtectBookedVehicleResponse",
+    "StationCreateRequest",
+    "StationUpdateRequest",
+    "StationResponse",
+    "StationListResponse",
+    "StationDeactivateResponse",
 ]

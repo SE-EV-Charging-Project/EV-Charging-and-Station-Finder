@@ -5,6 +5,7 @@ from app.models.token import PasswordResetCode, RevokedToken
 from app.models.operator_application import OperatorApplication, ApplicationStatus
 from app.models.vehicle import Vehicle, ConnectorType
 from app.models.booking import Booking, BookingStatus
+from app.models.station import Station, StationStatus
 
 __all__ = [
     "User",
@@ -20,4 +21,6 @@ __all__ = [
     "ConnectorType",
     "Booking",
     "BookingStatus",
+    "Station",
+    "StationStatus",
 ]
