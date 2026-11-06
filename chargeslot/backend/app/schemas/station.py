@@ -66,6 +66,9 @@ class StationResponse(BaseModel):
     contact_email: str | None
     status: StationStatus
     is_active: bool
+    rejection_reason: str | None = None
+    reviewed_by_admin_id: int | None = None
+    reviewed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -90,3 +93,102 @@ class StationDeactivateResponse(BaseModel):
     station_id: int
     is_active: bool
     status: StationStatus
+
+
+class StationValidationRulesResponse(BaseModel):
+    """
+    Response model for Appendix B.4 validation constraints (REQ-F2-04 / CS19-030).
+    """
+    station_rules: dict
+    charger_rules: dict
+
+
+class StationValidationCheckRequest(BaseModel):
+    """
+    Payload for dry-run station validation check without database mutation.
+    """
+    data: dict
+    partial: bool = False
+
+
+class StationValidationCheckResponse(BaseModel):
+    """
+    Response for dry-run station validation check.
+    """
+    valid: bool
+    errors: dict[str, str]
+    message: str
+
+
+class ChargerValidationCheckRequest(BaseModel):
+    """
+    Payload for dry-run charger validation check without database mutation.
+    """
+    data: dict
+    partial: bool = False
+
+
+class ChargerValidationCheckResponse(BaseModel):
+    """
+    Response for dry-run charger validation check.
+    """
+    valid: bool
+    errors: dict[str, str]
+    message: str
+
+
+class StationRejectRequest(BaseModel):
+    """
+    Payload for rejecting a station (REQ-F2-03 / CS19-029).
+    """
+    reason: str = Field(..., min_length=3, max_length=500, description="Reason for rejection")
+
+    @field_validator("reason")
+    @classmethod
+    def strip_whitespace(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("Rejection reason cannot be empty")
+        return s
+
+
+class StationApprovalResponse(BaseModel):
+    """
+    Response for station approval/rejection moderation actions.
+    """
+    id: int
+    name: str
+    status: StationStatus
+    is_active: bool
+    rejection_reason: str | None = None
+    reviewed_by_admin_id: int | None = None
+    reviewed_at: datetime | None = None
+    message: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StationApprovalGateStatusResponse(BaseModel):
+    """
+    Status payload for SW Architecture route GET /api/v1/stations/station-approval-gate.
+    """
+    station_id: int
+    station_name: str
+    status: StationStatus
+    is_active: bool
+    visible_to_drivers: bool
+    can_approve: bool
+    rejection_reason: str | None = None
+    reviewed_by_admin_id: int | None = None
+    reviewed_at: datetime | None = None
+
+
+class StationApprovalGateActionRequest(BaseModel):
+    """
+    Payload for SW Architecture route POST /api/v1/stations/station-approval-gate.
+    """
+    station_id: int
+    action: str = Field(..., description="Action to perform: 'approve' or 'reject'")
+    reason: str | None = Field(default=None, max_length=500, description="Rejection reason if action is 'reject'")
+
+

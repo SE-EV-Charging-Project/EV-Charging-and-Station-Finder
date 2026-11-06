@@ -564,3 +564,340 @@ def test_tc_f2_01_update_station_empty_and_deactivate_via_update(
     assert res_deact.json()["is_active"] is False
     assert res_deact.json()["status"] == "inactive"
 
+
+# =========================================================================
+# TC-F2-04 / STC-F2-04: Station & Charger Validation Tests (REQ-F2-04 / CS19-030)
+# =========================================================================
+
+def test_tc_f2_04_get_validation_rules(client: TestClient, operator_user: User):
+    """
+    TC-F2-04-01: GET /validation-rules returns Appendix B.4 validation constraints
+    for both stations and chargers (REQ-F2-04).
+    """
+    headers = {"Authorization": f"Bearer {make_token(operator_user)}"}
+    res = client.get("/api/v1/stations/validation-rules", headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert "station_rules" in data
+    assert "charger_rules" in data
+
+    # Verify station rules
+    station_rules = data["station_rules"]
+    assert station_rules["latitude"]["min"] == -90.0
+    assert station_rules["latitude"]["max"] == 90.0
+    assert station_rules["longitude"]["min"] == -180.0
+    assert station_rules["longitude"]["max"] == 180.0
+    assert station_rules["name"]["max_length"] == 100
+    assert station_rules["address"]["max_length"] == 200
+
+    # Verify charger rules
+    charger_rules = data["charger_rules"]
+    assert charger_rules["power_kw"]["min"] == 1.0
+    assert charger_rules["power_kw"]["max"] == 400.0
+    assert "CCS2" in charger_rules["connector_type"]["allowed_values"]
+    assert "CHAdeMO" in charger_rules["connector_type"]["allowed_values"]
+    assert "Type 2" in charger_rules["connector_type"]["allowed_values"]
+    assert "GB/T" in charger_rules["connector_type"]["allowed_values"]
+    assert "AC" in charger_rules["current_type"]["allowed_values"]
+    assert "DC" in charger_rules["current_type"]["allowed_values"]
+
+
+def test_tc_f2_04_validate_station_dry_run_success(client: TestClient, operator_user: User):
+    """
+    TC-F2-04-02: POST /validate returns valid=True and empty errors for correct station data.
+    """
+    headers = {"Authorization": f"Bearer {make_token(operator_user)}"}
+    payload = {
+        "data": {
+            "name": "Whitefield Charging Plaza",
+            "address": "ECC Road, Whitefield, Bengaluru",
+            "latitude": 12.9698,
+            "longitude": 77.7499,
+            "operating_hours": "24 hours",
+            "contact_phone": "+919876543210",
+            "contact_email": "whitefield@charge.in",
+            "amenities": ["wifi", "restroom"],
+        },
+        "partial": False,
+    }
+    res = client.post("/api/v1/stations/validate", json=payload, headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["valid"] is True
+    assert data["errors"] == {}
+    assert "valid" in data["message"].lower()
+
+
+def test_tc_f2_04_validate_station_field_level_errors(client: TestClient, operator_user: User):
+    """
+    TC-F2-04-03: POST /validate returns valid=False with specific field-level messages
+    for multiple malformed inputs (REQ-F2-04).
+    """
+    headers = {"Authorization": f"Bearer {make_token(operator_user)}"}
+    payload = {
+        "data": {
+            "name": "",
+            "address": "",
+            "latitude": 120.0,  # Out of range [-90, 90]
+            "longitude": -200.0,  # Out of range [-180, 180]
+            "operating_hours": "",
+            "contact_phone": "abc",  # Invalid phone
+            "contact_email": "not-an-email",  # Invalid email
+            "amenities": "not-a-list",  # Must be list
+        },
+        "partial": False,
+    }
+    res = client.post("/api/v1/stations/validate", json=payload, headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["valid"] is False
+    errors = data["errors"]
+    assert "name" in errors
+    assert "address" in errors
+    assert "latitude" in errors
+    assert "longitude" in errors
+    assert "operating_hours" in errors
+    assert "contact_phone" in errors
+    assert "contact_email" in errors
+    assert "amenities" in errors
+
+
+def test_tc_f2_04_coordinate_boundaries(client: TestClient, operator_user: User):
+    """
+    TC-F2-04-04: Boundary partition testing on latitude [-90.0, 90.0] and longitude [-180.0, 180.0].
+    """
+    headers = {"Authorization": f"Bearer {make_token(operator_user)}"}
+
+    # Exact boundary limits (valid)
+    for lat, lon in [(-90.0, -180.0), (90.0, 180.0), (0.0, 0.0)]:
+        payload = {
+            "data": {
+                "name": "Boundary Station",
+                "address": "Valid Address",
+                "latitude": lat,
+                "longitude": lon,
+                "operating_hours": "24 hours",
+                "contact_phone": "+919876543210",
+            },
+            "partial": False,
+        }
+        res = client.post("/api/v1/stations/validate", json=payload, headers=headers)
+        assert res.status_code == 200
+        assert res.json()["valid"] is True, f"Failed for lat={lat}, lon={lon}"
+
+    # Just outside boundaries (invalid)
+    for lat, lon in [(-90.001, 0.0), (90.001, 0.0), (0.0, -180.001), (0.0, 180.001)]:
+        payload = {
+            "data": {
+                "name": "Boundary Station",
+                "address": "Valid Address",
+                "latitude": lat,
+                "longitude": lon,
+                "operating_hours": "24 hours",
+                "contact_phone": "+919876543210",
+            },
+            "partial": False,
+        }
+        res = client.post("/api/v1/stations/validate", json=payload, headers=headers)
+        assert res.status_code == 200
+        assert res.json()["valid"] is False, f"Should have failed for lat={lat}, lon={lon}"
+
+
+def test_tc_f2_04_validate_charger_success(client: TestClient, operator_user: User):
+    """
+    TC-F2-04-05: POST /validate-charger validates charger specs against Appendix B.4.
+    """
+    headers = {"Authorization": f"Bearer {make_token(operator_user)}"}
+
+    # Test all 4 standard connector types
+    for conn in ["CCS2", "CHAdeMO", "Type 2", "GB/T"]:
+        payload = {
+            "data": {
+                "power_kw": 150.0,
+                "current_type": "DC",
+                "connector_type": conn,
+                "gateway_id": "CP-1001",
+            },
+            "partial": False,
+        }
+        res = client.post("/api/v1/stations/validate-charger", json=payload, headers=headers)
+        assert res.status_code == 200
+        assert res.json()["valid"] is True, f"Failed for connector_type={conn}"
+
+
+def test_tc_f2_04_validate_charger_rejections(client: TestClient, operator_user: User):
+    """
+    TC-F2-04-06: POST /validate-charger rejects invalid connector types, power out of range,
+    and invalid current types with field-level errors (REQ-F2-04).
+    """
+    headers = {"Authorization": f"Bearer {make_token(operator_user)}"}
+
+    # Invalid connector type
+    payload_bad_conn = {
+        "data": {
+            "power_kw": 50.0,
+            "current_type": "DC",
+            "connector_type": "ProprietaryPlug",
+            "gateway_id": "CP-1002",
+        },
+        "partial": False,
+    }
+    res_conn = client.post("/api/v1/stations/validate-charger", json=payload_bad_conn, headers=headers)
+    assert res_conn.status_code == 200
+    data_conn = res_conn.json()
+    assert data_conn["valid"] is False
+    assert "connector_type" in data_conn["errors"]
+    assert "Must be one of" in data_conn["errors"]["connector_type"]
+
+    # Invalid power (< 1.0 kW or > 400.0 kW)
+    for bad_power in [0.5, 450.0]:
+        payload_bad_power = {
+            "data": {
+                "power_kw": bad_power,
+                "current_type": "AC",
+                "connector_type": "Type 2",
+                "gateway_id": "CP-1003",
+            },
+            "partial": False,
+        }
+        res_power = client.post("/api/v1/stations/validate-charger", json=payload_bad_power, headers=headers)
+        assert res_power.status_code == 200
+        assert res_power.json()["valid"] is False
+        assert "power_kw" in res_power.json()["errors"]
+
+    # Invalid current type (not AC or DC)
+    payload_bad_current = {
+        "data": {
+            "power_kw": 22.0,
+            "current_type": "HYBRID",
+            "connector_type": "Type 2",
+            "gateway_id": "CP-1004",
+        },
+        "partial": False,
+    }
+    res_curr = client.post("/api/v1/stations/validate-charger", json=payload_bad_current, headers=headers)
+    assert res_curr.status_code == 200
+    assert res_curr.json()["valid"] is False
+    assert "current_type" in res_curr.json()["errors"]
+
+
+def test_tc_f2_04_validation_endpoints_rbac(client: TestClient, driver_user: User):
+    """
+    TC-F2-04-07: Drivers cannot access validation utility endpoints (403 Forbidden).
+    Unauthenticated access is denied with 401 Unauthorized.
+    """
+    # Unauthenticated
+    assert client.get("/api/v1/stations/validation-rules").status_code == 401
+    assert client.post("/api/v1/stations/validate", json={"data": {}}).status_code == 401
+    assert client.post("/api/v1/stations/validate-charger", json={"data": {}}).status_code == 401
+
+    # Driver role
+    driver_headers = {"Authorization": f"Bearer {make_token(driver_user)}"}
+    assert client.get("/api/v1/stations/validation-rules", headers=driver_headers).status_code == 403
+    assert client.post("/api/v1/stations/validate", json={"data": {}}, headers=driver_headers).status_code == 403
+    assert client.post("/api/v1/stations/validate-charger", json={"data": {}}, headers=driver_headers).status_code == 403
+
+
+def test_tc_f2_04_validators_direct_unit():
+    """
+    TC-F2-04-08: Direct unit test coverage of all branches in app.stations.validators.
+    """
+    from fastapi import HTTPException
+    from app.stations.validators import (
+        validate_station_values,
+        validate_charger_values,
+        enforce_station_values,
+        enforce_charger_values,
+    )
+
+    # 1. Missing mandatory fields when partial=False
+    valid, errors = validate_station_values({}, partial=False)
+    assert not valid
+    for field in ["name", "address", "latitude", "longitude", "operating_hours", "contact_phone"]:
+        assert field in errors
+
+    # 2. Non-numeric coordinates and empty whitespace strings
+    bad_coords = {
+        "name": "   ",
+        "address": "   ",
+        "latitude": "not-numeric",
+        "longitude": "not-numeric",
+        "operating_hours": "   ",
+        "contact_phone": "   ",
+        "contact_email": "x" * 130 + "@example.com",
+        "amenities": ["valid", 123],
+    }
+    valid, errors = validate_station_values(bad_coords, partial=True)
+    assert not valid
+    assert "name" in errors
+    assert "address" in errors
+    assert "latitude" in errors
+    assert "longitude" in errors
+    assert "operating_hours" in errors
+    assert "contact_phone" in errors
+    assert "contact_email" in errors
+    assert "amenities" in errors
+
+    # 3. String length exceeded
+    long_strings = {
+        "name": "A" * 105,
+        "address": "B" * 205,
+        "operating_hours": "C" * 105,
+    }
+    valid, errors = validate_station_values(long_strings, partial=True)
+    assert not valid
+    assert "name" in errors
+    assert "address" in errors
+    assert "operating_hours" in errors
+
+    # 4. Charger missing fields when partial=False
+    valid_c, errors_c = validate_charger_values({}, partial=False)
+    assert not valid_c
+    for field in ["power_kw", "current_type", "connector_type", "gateway_id"]:
+        assert field in errors_c
+
+    # 5. Charger non-numeric power and bad gateway_id
+    bad_charger = {
+        "power_kw": "invalid-num",
+        "gateway_id": "   ",
+    }
+    valid_c, errors_c = validate_charger_values(bad_charger, partial=True)
+    assert not valid_c
+    assert "power_kw" in errors_c
+    assert "gateway_id" in errors_c
+
+    # 6. Long gateway_id
+    valid_c, errors_c = validate_charger_values({"gateway_id": "G" * 105}, partial=True)
+    assert not valid_c
+    assert "gateway_id" in errors_c
+
+    # 7. Enforce exceptions
+    with pytest.raises(HTTPException) as exc_info:
+        enforce_station_values({}, partial=False)
+    assert exc_info.value.status_code == 422
+    assert "errors" in exc_info.value.detail
+
+    with pytest.raises(HTTPException) as exc_info:
+        enforce_charger_values({}, partial=False)
+    assert exc_info.value.status_code == 422
+    assert "errors" in exc_info.value.detail
+
+    # 8. Enforce success
+    enforce_station_values({
+        "name": "Valid Station",
+        "address": "Valid Address",
+        "latitude": 12.9,
+        "longitude": 77.6,
+        "operating_hours": "24 hours",
+        "contact_phone": "+919876543210",
+    }, partial=False)
+
+    enforce_charger_values({
+        "power_kw": 50.0,
+        "current_type": "DC",
+        "connector_type": "CCS2",
+        "gateway_id": "CP-101",
+    }, partial=False)
+
+
+
