@@ -6,6 +6,8 @@ from app.models.operator_application import OperatorApplication, ApplicationStat
 from app.models.vehicle import Vehicle, ConnectorType
 from app.models.booking import Booking, BookingStatus
 from app.models.station import Station, StationStatus
+from app.models.charger import Charger, Connector, CurrentType, ConnectorStatus
+from app.models.maintenance import MaintenanceWindow
 
 __all__ = [
     "User",
@@ -23,4 +25,9 @@ __all__ = [
     "BookingStatus",
     "Station",
     "StationStatus",
+    "Charger",
+    "Connector",
+    "CurrentType",
+    "ConnectorStatus",
+    "MaintenanceWindow",
 ]

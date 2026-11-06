@@ -47,6 +47,12 @@ class Station(Base):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
 
+    rejection_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    reviewed_by_admin_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -59,4 +65,7 @@ class Station(Base):
         nullable=False
     )
 
-    operator = relationship("User", back_populates="stations")
+    operator = relationship("User", foreign_keys=[operator_id], back_populates="stations")
+    reviewer = relationship("User", foreign_keys=[reviewed_by_admin_id])
+    chargers = relationship("Charger", back_populates="station", cascade="all, delete-orphan")
+    maintenance_windows = relationship("MaintenanceWindow", back_populates="station", cascade="all, delete-orphan")
