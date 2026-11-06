@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_operator
+from app.api.deps import require_operator, get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.charger import (
@@ -14,6 +14,9 @@ from app.schemas.charger import (
     ConnectorUpdateRequest,
     ConnectorResponse,
     ConnectorDeleteResponse,
+    ChargerOutOfServiceRequest,
+    ChargerReturnToServiceRequest,
+    ChargerOutOfServiceResponse,
 )
 from app.services.charger_service import ChargerService
 
@@ -145,6 +148,115 @@ def delete_charger(
         message="Charger successfully removed.",
         id=cid,
     )
+
+
+# =========================================================================
+# Out-of-Service Marking Endpoints (REQ-F2-05 / CS19-031)
+# =========================================================================
+
+@router.patch(
+    "/chargers/{charger_id}/out-of-service",
+    response_model=ChargerOutOfServiceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Mark charger out of service",
+    description="Allows a station operator to mark a charger out of service with mandatory reason and expected return time (REQ-F2-05 / CS19-031).",
+)
+@router.post(
+    "/chargers/{charger_id}/out-of-service",
+    response_model=ChargerOutOfServiceResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def mark_charger_out_of_service(
+    charger_id: int,
+    payload: ChargerOutOfServiceRequest,
+    request: Request,
+    current_user: User = Depends(require_operator),
+    db: Session = Depends(get_db),
+) -> ChargerOutOfServiceResponse:
+    client_ip = request.client.host if request.client else None
+    charger, affected_count = ChargerService.mark_out_of_service(
+        db=db,
+        user=current_user,
+        charger_id=charger_id,
+        reason=payload.reason,
+        expected_return_time=payload.expected_return_time,
+        ip_address=client_ip,
+    )
+    return ChargerOutOfServiceResponse(
+        charger_id=charger.id,
+        station_id=charger.station_id,
+        name=charger.name,
+        is_out_of_service=charger.is_out_of_service,
+        out_of_service_reason=charger.out_of_service_reason,
+        expected_return_time=charger.expected_return_time,
+        out_of_service_at=charger.out_of_service_at,
+        affected_connectors_count=affected_count,
+        message=f"Charger '{charger.name or charger.id}' marked out of service until {charger.expected_return_time.isoformat()} (REQ-F2-05).",
+    )
+
+
+@router.patch(
+    "/chargers/{charger_id}/return-to-service",
+    response_model=ChargerOutOfServiceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Return charger to service",
+    description="Returns an out-of-service charger back to operational status and restores connectors to Available (REQ-F2-05 / CS19-031).",
+)
+@router.post(
+    "/chargers/{charger_id}/return-to-service",
+    response_model=ChargerOutOfServiceResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def return_charger_to_service(
+    charger_id: int,
+    payload: ChargerReturnToServiceRequest | None = None,
+    request: Request = None,
+    current_user: User = Depends(require_operator),
+    db: Session = Depends(get_db),
+) -> ChargerOutOfServiceResponse:
+    client_ip = request.client.host if request and request.client else None
+    note = payload.note if payload else None
+    charger, affected_count = ChargerService.return_to_service(
+        db=db,
+        user=current_user,
+        charger_id=charger_id,
+        note=note,
+        ip_address=client_ip,
+    )
+    return ChargerOutOfServiceResponse(
+        charger_id=charger.id,
+        station_id=charger.station_id,
+        name=charger.name,
+        is_out_of_service=charger.is_out_of_service,
+        out_of_service_reason=charger.out_of_service_reason,
+        expected_return_time=charger.expected_return_time,
+        out_of_service_at=charger.out_of_service_at,
+        affected_connectors_count=affected_count,
+        message=f"Charger '{charger.name or charger.id}' successfully returned to active service.",
+    )
+
+
+@router.get(
+    "/chargers/{charger_id}/out-of-service",
+    response_model=ChargerOutOfServiceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get charger out-of-service status",
+    description="Inspects whether a charger is out of service, reason, and expected return time (REQ-F2-05 / CS19-031).",
+)
+def get_charger_out_of_service(
+    charger_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ChargerOutOfServiceResponse:
+    data = ChargerService.get_out_of_service_status(
+        db=db,
+        user=current_user,
+        charger_id=charger_id,
+    )
+    return ChargerOutOfServiceResponse(**data)
+
 
 
 # =========================================================================

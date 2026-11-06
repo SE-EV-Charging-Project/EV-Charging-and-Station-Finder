@@ -89,6 +89,9 @@ class ChargerResponse(BaseModel):
     gateway_id: str
     is_active: bool
     is_out_of_service: bool
+    out_of_service_reason: str | None = None
+    expected_return_time: datetime | None = None
+    out_of_service_at: datetime | None = None
     connectors: list[ConnectorResponse]
     created_at: datetime
     updated_at: datetime
@@ -118,3 +121,52 @@ class ConnectorDeleteResponse(BaseModel):
     """
     message: str
     id: int
+
+
+class ChargerOutOfServiceRequest(BaseModel):
+    """
+    Payload for marking a charger out of service (REQ-F2-05 / CS19-031).
+    """
+    reason: str = Field(..., min_length=3, max_length=500, description="Reason for out of service marking")
+    expected_return_time: datetime = Field(..., description="Expected return timestamp (must be in the future)")
+
+    @field_validator("reason")
+    @classmethod
+    def strip_whitespace(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("Reason cannot be empty or only whitespace")
+        return s
+
+
+class ChargerReturnToServiceRequest(BaseModel):
+    """
+    Payload for returning an out-of-service charger back to operational status.
+    """
+    note: str | None = Field(default=None, max_length=500, description="Optional service notes")
+
+
+class ChargerOutOfServiceResponse(BaseModel):
+    """
+    Response model confirming out-of-service status transition.
+    """
+    charger_id: int
+    station_id: int
+    name: str | None = None
+    is_out_of_service: bool
+    out_of_service_reason: str | None = None
+    expected_return_time: datetime | None = None
+    out_of_service_at: datetime | None = None
+    affected_connectors_count: int
+    message: str
+
+
+class StationOutOfServiceMarkingRequest(BaseModel):
+    """
+    Payload for SW Architecture route PATCH /api/v1/stations/out-of-service-marking (Page 6).
+    """
+    charger_id: int = Field(..., description="Target charger identifier")
+    is_out_of_service: bool = Field(..., description="True to mark out of service, False to return to service")
+    reason: str | None = Field(default=None, max_length=500, description="Reason (mandatory when is_out_of_service=True)")
+    expected_return_time: datetime | None = Field(default=None, description="Expected return time (mandatory when is_out_of_service=True)")
+

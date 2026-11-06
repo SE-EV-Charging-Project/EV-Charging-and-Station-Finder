@@ -21,7 +21,12 @@ from app.schemas.station import (
     StationApprovalGateStatusResponse,
     StationApprovalGateActionRequest,
 )
+from app.schemas.charger import (
+    StationOutOfServiceMarkingRequest,
+    ChargerOutOfServiceResponse,
+)
 from app.services.station_service import StationService
+from app.services.charger_service import ChargerService
 
 router = APIRouter(prefix="/stations", tags=["Stations"])
 
@@ -259,6 +264,96 @@ def validate_charger_check(
         errors=errors,
         message=msg,
     )
+
+
+# =========================================================================
+# Out-of-Service Marking SW Architecture Routes (REQ-F2-05 / CS19-031)
+# =========================================================================
+
+@router.patch(
+    "/out-of-service-marking",
+    response_model=ChargerOutOfServiceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Out-of-service marking (SW Architecture Route)",
+    description="Matching SW Architecture Page 6: Mark charger out of service or return to service (REQ-F2-05 / CS19-031).",
+)
+@router.post(
+    "/out-of-service-marking",
+    response_model=ChargerOutOfServiceResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def patch_station_out_of_service_marking(
+    payload: StationOutOfServiceMarkingRequest,
+    request: Request,
+    current_user: User = Depends(require_operator),
+    db: Session = Depends(get_db),
+) -> ChargerOutOfServiceResponse:
+    client_ip = request.client.host if request.client else None
+    if payload.is_out_of_service:
+        if not payload.reason:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Reason is mandatory when marking a charger out of service (REQ-F2-05).",
+            )
+        if not payload.expected_return_time:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Expected return time is mandatory when marking a charger out of service (REQ-F2-05).",
+            )
+        charger, affected_count = ChargerService.mark_out_of_service(
+            db=db,
+            user=current_user,
+            charger_id=payload.charger_id,
+            reason=payload.reason,
+            expected_return_time=payload.expected_return_time,
+            ip_address=client_ip,
+        )
+    else:
+        charger, affected_count = ChargerService.return_to_service(
+            db=db,
+            user=current_user,
+            charger_id=payload.charger_id,
+            note=payload.reason,
+            ip_address=client_ip,
+        )
+
+    return ChargerOutOfServiceResponse(
+        charger_id=charger.id,
+        station_id=charger.station_id,
+        name=charger.name,
+        is_out_of_service=charger.is_out_of_service,
+        out_of_service_reason=charger.out_of_service_reason,
+        expected_return_time=charger.expected_return_time,
+        out_of_service_at=charger.out_of_service_at,
+        affected_connectors_count=affected_count,
+        message=(
+            f"Charger '{charger.name or charger.id}' marked out of service (REQ-F2-05)."
+            if charger.is_out_of_service
+            else f"Charger '{charger.name or charger.id}' returned to operational service."
+        ),
+    )
+
+
+@router.get(
+    "/out-of-service-marking",
+    response_model=ChargerOutOfServiceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get out-of-service status (SW Architecture Route)",
+    description="Matching SW Architecture Page 6 GET alias: Inspect charger out-of-service status (REQ-F2-05 / CS19-031).",
+)
+def get_station_out_of_service_marking(
+    charger_id: int = Query(..., description="Target charger ID"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ChargerOutOfServiceResponse:
+    data = ChargerService.get_out_of_service_status(
+        db=db,
+        user=current_user,
+        charger_id=charger_id,
+    )
+    return ChargerOutOfServiceResponse(**data)
+
 
 
 @router.get(

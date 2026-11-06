@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -318,3 +319,156 @@ class ChargerService:
         )
 
         return cid
+
+    @staticmethod
+    def mark_out_of_service(
+        db: Session,
+        user: User,
+        charger_id: int,
+        reason: str,
+        expected_return_time: datetime,
+        ip_address: str | None = None,
+    ) -> tuple[Charger, int]:
+        """
+        Marks a charger out of service with mandatory reason and expected return time (REQ-F2-05 / CS19-031).
+        Enforces operator scoping, future timestamp validation, and sets attached connectors to Offline.
+        """
+        charger = db.query(Charger).filter(Charger.id == charger_id).first()
+        if not charger:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Charger with ID {charger_id} not found.",
+            )
+
+        enforce_operator_scope(user, charger.station.operator_id)
+
+        cleaned_reason = reason.strip() if reason else ""
+        if len(cleaned_reason) < 3 or len(cleaned_reason) > 500:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Reason for out of service marking must be between 3 and 500 characters (REQ-F2-05).",
+            )
+
+        now = datetime.now(timezone.utc)
+        ret_time = expected_return_time
+        if ret_time.tzinfo is None:
+            ret_time = ret_time.replace(tzinfo=timezone.utc)
+
+        if ret_time <= now:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Expected return time must be a future timestamp (REQ-F2-05).",
+            )
+
+        charger.is_out_of_service = True
+        charger.out_of_service_reason = cleaned_reason
+        charger.expected_return_time = ret_time
+        charger.out_of_service_at = now
+
+        # Update child connectors to OFFLINE
+        affected_count = 0
+        for conn in charger.connectors:
+            conn.status = ConnectorStatus.OFFLINE
+            affected_count += 1
+
+        db.commit()
+        db.refresh(charger)
+
+        AuditService.log_action(
+            db=db,
+            user_id=user.id,
+            action="CHARGER_MARKED_OUT_OF_SERVICE",
+            resource=f"Charger:{charger.id}",
+            details=(
+                f"Charger '{charger.name or charger.id}' marked out of service by user {user.id}. "
+                f"Reason: {cleaned_reason}. Expected return: {ret_time.isoformat()}"
+            ),
+            ip_address=ip_address,
+        )
+
+        return charger, affected_count
+
+    @staticmethod
+    def return_to_service(
+        db: Session,
+        user: User,
+        charger_id: int,
+        note: str | None = None,
+        ip_address: str | None = None,
+    ) -> tuple[Charger, int]:
+        """
+        Returns an out-of-service charger back to operational service (REQ-F2-05 / CS19-031).
+        Restores attached connectors back to AVAILABLE status.
+        """
+        charger = db.query(Charger).filter(Charger.id == charger_id).first()
+        if not charger:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Charger with ID {charger_id} not found.",
+            )
+
+        enforce_operator_scope(user, charger.station.operator_id)
+
+        charger.is_out_of_service = False
+        charger.out_of_service_reason = None
+        charger.expected_return_time = None
+        charger.out_of_service_at = None
+
+        # Restore child connectors to AVAILABLE
+        affected_count = 0
+        for conn in charger.connectors:
+            conn.status = ConnectorStatus.AVAILABLE
+            affected_count += 1
+
+        db.commit()
+        db.refresh(charger)
+
+        AuditService.log_action(
+            db=db,
+            user_id=user.id,
+            action="CHARGER_RETURNED_TO_SERVICE",
+            resource=f"Charger:{charger.id}",
+            details=f"Charger '{charger.name or charger.id}' returned to service by user {user.id}. Note: {note}",
+            ip_address=ip_address,
+        )
+
+        return charger, affected_count
+
+    @staticmethod
+    def get_out_of_service_status(
+        db: Session,
+        user: User,
+        charger_id: int,
+    ) -> dict:
+        """
+        Retrieves out-of-service inspection status for a charger (REQ-F2-05).
+        """
+        charger = db.query(Charger).filter(Charger.id == charger_id).first()
+        if not charger:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Charger with ID {charger_id} not found.",
+            )
+
+        if user.role == UserRole.OPERATOR and charger.station.operator_id != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to foreign charger status (REQ-F1-12).",
+            )
+
+        return {
+            "charger_id": charger.id,
+            "station_id": charger.station_id,
+            "name": charger.name,
+            "is_out_of_service": charger.is_out_of_service,
+            "out_of_service_reason": charger.out_of_service_reason,
+            "expected_return_time": charger.expected_return_time,
+            "out_of_service_at": charger.out_of_service_at,
+            "affected_connectors_count": len(charger.connectors),
+            "message": (
+                f"Charger is out of service: {charger.out_of_service_reason}"
+                if charger.is_out_of_service
+                else "Charger is in active operational service."
+            ),
+        }
+

@@ -13,6 +13,10 @@ from app.schemas.charger import (
     ConnectorCreateRequest,
     ConnectorUpdateRequest,
     ConnectorResponse,
+    ChargerOutOfServiceRequest,
+    ChargerReturnToServiceRequest,
+    ChargerOutOfServiceResponse,
+    StationOutOfServiceMarkingRequest,
 )
 
 __all__ = [
@@ -28,4 +32,8 @@ __all__ = [
     "ConnectorCreateRequest",
     "ConnectorUpdateRequest",
     "ConnectorResponse",
+    "ChargerOutOfServiceRequest",
+    "ChargerReturnToServiceRequest",
+    "ChargerOutOfServiceResponse",
+    "StationOutOfServiceMarkingRequest",
 ]
