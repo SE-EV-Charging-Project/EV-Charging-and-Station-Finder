@@ -11,12 +11,18 @@ from app.schemas.station import (
     StationResponse,
 )
 from app.services.audit_service import AuditService
+from app.stations.validators import (
+    enforce_station_values,
+    validate_station_values,
+    validate_charger_values,
+    get_station_validation_rules,
+)
 
 
 class StationService:
     """
     Service handling Station CRUD, validation, and deactivation
-    (CS19-027 / REQ-F2-01 / Appendix B.4).
+    (CS19-027 / CS19-030 / REQ-F2-01 / REQ-F2-04 / Appendix B.4).
     """
 
     @staticmethod
@@ -29,12 +35,16 @@ class StationService:
         """
         Creates a new charging station managed by the authenticated Station Operator.
         Initial status is 'pending' awaiting Admin approval (REQ-F2-01, REQ-F2-03).
+        Validates coordinates and fields per REQ-F2-04 / Appendix B.4.
         """
         if user.role not in [UserRole.OPERATOR, UserRole.ADMIN]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Insufficient permissions: Station Operator or Administrator role required (REQ-F1-11).",
             )
+
+        # Enforce validation rules per REQ-F2-04
+        enforce_station_values(data.model_dump())
 
         station = Station(
             operator_id=user.id,
@@ -151,6 +161,9 @@ class StationService:
         if not update_dict:
             return station
 
+        # Enforce validation rules per REQ-F2-04 on modified fields
+        enforce_station_values(update_dict, partial=True)
+
         content_changed = False
         for field, value in update_dict.items():
             if field == "is_active":
@@ -214,3 +227,25 @@ class StationService:
         )
 
         return station
+
+    @staticmethod
+    def get_validation_rules() -> dict:
+        """
+        Returns Appendix B.4 validation constraints for stations and chargers.
+        """
+        return get_station_validation_rules()
+
+    @staticmethod
+    def validate_station_payload(data: dict, partial: bool = False) -> tuple[bool, dict[str, str]]:
+        """
+        Validates station fields without database modification (dry-run check).
+        """
+        return validate_station_values(data, partial=partial)
+
+    @staticmethod
+    def validate_charger_payload(data: dict, partial: bool = False) -> tuple[bool, dict[str, str]]:
+        """
+        Validates charger and connector fields without database modification (dry-run check).
+        """
+        return validate_charger_values(data, partial=partial)
+

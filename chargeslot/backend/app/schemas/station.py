@@ -90,3 +90,46 @@ class StationDeactivateResponse(BaseModel):
     station_id: int
     is_active: bool
     status: StationStatus
+
+
+class StationValidationRulesResponse(BaseModel):
+    """
+    Response model for Appendix B.4 validation constraints (REQ-F2-04 / CS19-030).
+    """
+    station_rules: dict
+    charger_rules: dict
+
+
+class StationValidationCheckRequest(BaseModel):
+    """
+    Payload for dry-run station validation check without database mutation.
+    """
+    data: dict
+    partial: bool = False
+
+
+class StationValidationCheckResponse(BaseModel):
+    """
+    Response for dry-run station validation check.
+    """
+    valid: bool
+    errors: dict[str, str]
+    message: str
+
+
+class ChargerValidationCheckRequest(BaseModel):
+    """
+    Payload for dry-run charger validation check without database mutation.
+    """
+    data: dict
+    partial: bool = False
+
+
+class ChargerValidationCheckResponse(BaseModel):
+    """
+    Response for dry-run charger validation check.
+    """
+    valid: bool
+    errors: dict[str, str]
+    message: str
+

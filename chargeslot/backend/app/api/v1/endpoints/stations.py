@@ -11,6 +11,11 @@ from app.schemas.station import (
     StationResponse,
     StationListResponse,
     StationDeactivateResponse,
+    StationValidationRulesResponse,
+    StationValidationCheckRequest,
+    StationValidationCheckResponse,
+    ChargerValidationCheckRequest,
+    ChargerValidationCheckResponse,
 )
 from app.services.station_service import StationService
 
@@ -70,6 +75,77 @@ def list_stations(
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.get(
+    "/validation-rules",
+    response_model=StationValidationRulesResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get Appendix B.4 validation constraints",
+    description="Returns data types, required constraints, coordinate boundaries, and allowed connector types (REQ-F2-04 / CS19-030).",
+)
+def get_validation_rules(
+    current_user: User = Depends(require_operator),
+) -> StationValidationRulesResponse:
+    rules = StationService.get_validation_rules()
+    return StationValidationRulesResponse(
+        station_rules=rules["station_rules"],
+        charger_rules=rules["charger_rules"],
+    )
+
+
+@router.post(
+    "/validate",
+    response_model=StationValidationCheckResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Dry-run station validation check",
+    description="Validates station fields against Appendix B.4 and REQ-F2-04 without database mutation.",
+)
+def validate_station_check(
+    payload: StationValidationCheckRequest,
+    current_user: User = Depends(require_operator),
+) -> StationValidationCheckResponse:
+    is_valid, errors = StationService.validate_station_payload(
+        data=payload.data,
+        partial=payload.partial,
+    )
+    msg = (
+        "Station values are valid per REQ-F2-04."
+        if is_valid
+        else "Station validation failed. Please correct the specified field errors."
+    )
+    return StationValidationCheckResponse(
+        valid=is_valid,
+        errors=errors,
+        message=msg,
+    )
+
+
+@router.post(
+    "/validate-charger",
+    response_model=ChargerValidationCheckResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Dry-run charger and connector validation check",
+    description="Validates charger power rating, current type, and connector types against Appendix B.4 and REQ-F2-04 without saving.",
+)
+def validate_charger_check(
+    payload: ChargerValidationCheckRequest,
+    current_user: User = Depends(require_operator),
+) -> ChargerValidationCheckResponse:
+    is_valid, errors = StationService.validate_charger_payload(
+        data=payload.data,
+        partial=payload.partial,
+    )
+    msg = (
+        "Charger and connector specifications are valid per REQ-F2-04."
+        if is_valid
+        else "Charger validation failed. Please correct the specified field errors."
+    )
+    return ChargerValidationCheckResponse(
+        valid=is_valid,
+        errors=errors,
+        message=msg,
     )
 
 
