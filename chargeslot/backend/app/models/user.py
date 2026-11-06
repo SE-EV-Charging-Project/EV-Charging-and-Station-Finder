@@ -73,4 +73,4 @@ class User(Base):
     )
     vehicles = relationship("Vehicle", back_populates="user", cascade="all, delete-orphan")
     bookings = relationship("Booking", back_populates="user", cascade="all, delete-orphan")
-    stations = relationship("Station", back_populates="operator", cascade="all, delete-orphan")
+    stations = relationship("Station", foreign_keys="Station.operator_id", back_populates="operator", cascade="all, delete-orphan")
