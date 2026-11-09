@@ -32,6 +32,9 @@ from app.schemas.maintenance import (
 from app.schemas.discovery import (
     NearbyStationSearchRequest,
     NearbyStationSearchResponse,
+    StationAvailabilityMarker,
+    StationAvailabilityMarkersResponse,
+    BatchAvailabilityMarkersRequest,
 )
 from app.services.station_service import StationService
 from app.services.charger_service import ChargerService
@@ -457,6 +460,53 @@ def post_station_nearby_search(
         longitude=payload.longitude,
         radius_km=payload.radius_km,
         limit=payload.limit,
+        user=current_user,
+    )
+
+
+@router.get(
+    "/availability-markers",
+    response_model=StationAvailabilityMarkersResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get station availability markers (SW Architecture Route)",
+    description=(
+        "Retrieves colour-coded availability markers for stations showing available/total connectors "
+        "and accessible status text labels (REQ-F2-08 / CS19-034)."
+    ),
+)
+def get_station_availability_markers(
+    station_id: int | None = Query(default=None, description="Optional specific station ID"),
+    latitude: float | None = Query(default=None, ge=-90.0, le=90.0, description="Optional center latitude"),
+    longitude: float | None = Query(default=None, ge=-180.0, le=180.0, description="Optional center longitude"),
+    radius_km: float = Query(default=10.0, ge=1.0, le=50.0, description="Radius in km [1.0, 50.0]"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationAvailabilityMarkersResponse:
+    return DiscoveryService.get_availability_markers(
+        db=db,
+        station_id=station_id,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        user=current_user,
+    )
+
+
+@router.patch(
+    "/availability-markers",
+    response_model=StationAvailabilityMarkersResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Batch query availability markers via PATCH (SW Architecture Route)",
+    description="Matching SW Architecture Page 6 PATCH method: Batch retrieve availability markers for station IDs.",
+)
+def patch_station_availability_markers(
+    payload: BatchAvailabilityMarkersRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationAvailabilityMarkersResponse:
+    return DiscoveryService.get_availability_markers(
+        db=db,
+        station_ids=payload.station_ids,
         user=current_user,
     )
 

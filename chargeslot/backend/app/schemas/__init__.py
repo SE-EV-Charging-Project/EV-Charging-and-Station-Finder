@@ -84,6 +84,10 @@ from app.schemas.discovery import (
     NearbyStationSearchRequest,
     NearbyStationItem,
     NearbyStationSearchResponse,
+    MarkerColor,
+    StationAvailabilityMarker,
+    StationAvailabilityMarkersResponse,
+    BatchAvailabilityMarkersRequest,
 )
 
 __all__ = [
@@ -157,4 +161,8 @@ __all__ = [
     "NearbyStationSearchRequest",
     "NearbyStationItem",
     "NearbyStationSearchResponse",
+    "MarkerColor",
+    "StationAvailabilityMarker",
+    "StationAvailabilityMarkersResponse",
+    "BatchAvailabilityMarkersRequest",
 ]

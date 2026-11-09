@@ -1,4 +1,19 @@
+import enum
 from pydantic import BaseModel, Field, ConfigDict
+
+
+class MarkerColor(str, enum.Enum):
+    """
+    Availability marker color codes (SRS §5.2.1 / REQ-F2-08).
+    GREEN: All or multiple connectors available.
+    AMBER: Partially available (some occupied/reserved).
+    RED: Fully occupied or reserved (0 available).
+    GREY: Offline, faulted, out of service, or 0 operational connectors.
+    """
+    GREEN = "green"
+    AMBER = "amber"
+    RED = "red"
+    GREY = "grey"
 
 
 class NearbyStationSearchRequest(BaseModel):
@@ -55,6 +70,9 @@ class NearbyStationItem(BaseModel):
     available_connectors: int = 0
     connector_types: list[str] = Field(default_factory=list)
     max_power_kw: float | None = None
+    color_code: str | None = Field(default=None, description="Marker colour: green, amber, red, grey (REQ-F2-08)")
+    status_label: str | None = Field(default=None, description="Accessibility text label e.g. Available, Occupied")
+    badge_text: str | None = Field(default=None, description="Badge text e.g. '3/4 Available'")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -69,4 +87,44 @@ class NearbyStationSearchResponse(BaseModel):
     radius_km: float
     total_found: int
     stations: list[NearbyStationItem]
+
+
+class StationAvailabilityMarker(BaseModel):
+    """
+    Station availability marker model for map display (REQ-F2-08 / CS19-034).
+    Colour-codes each station marker by availability and shows the number of available
+    connectors out of the total, using a text label as well as colour.
+    """
+    station_id: int
+    name: str
+    latitude: float
+    longitude: float
+    total_connectors: int = Field(..., description="Total connectors at this station")
+    available_connectors: int = Field(..., description="Currently available connectors")
+    occupied_connectors: int = Field(default=0, description="Occupied connectors")
+    reserved_connectors: int = Field(default=0, description="Reserved connectors")
+    offline_connectors: int = Field(default=0, description="Offline or faulted connectors")
+    color_code: MarkerColor = Field(..., description="Colour code: green, amber, red, or grey")
+    hex_color: str = Field(..., description="Hex representation: #4CAF50, #FF9800, #F44336, #9E9E9E")
+    status_label: str = Field(..., description="Text label for colour-blind accessibility (REQ-F2-08)")
+    badge_text: str = Field(..., description="Available out of total text, e.g. '3/4 Available'")
+    is_operational: bool = Field(default=True, description="Whether station has operational connectors")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StationAvailabilityMarkersResponse(BaseModel):
+    """
+    Collection response of station availability markers for home map (REQ-F2-08 / §5.2.2 SR-F2-01).
+    """
+    total: int
+    markers: list[StationAvailabilityMarker]
+
+
+class BatchAvailabilityMarkersRequest(BaseModel):
+    """
+    Request payload to query or update availability markers for specific stations (REQ-F2-08).
+    """
+    station_ids: list[int] = Field(..., min_length=1, max_length=200, description="List of station IDs")
+
 

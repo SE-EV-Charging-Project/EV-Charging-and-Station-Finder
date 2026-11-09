@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -7,6 +7,9 @@ from app.models.user import User
 from app.schemas.discovery import (
     NearbyStationSearchRequest,
     NearbyStationSearchResponse,
+    StationAvailabilityMarker,
+    StationAvailabilityMarkersResponse,
+    BatchAvailabilityMarkersRequest,
 )
 from app.services.discovery_service import DiscoveryService
 
@@ -76,4 +79,100 @@ def post_nearby_stations(
         limit=payload.limit,
         user=current_user,
     )
+
+
+# =========================================================================
+# Availability Markers Endpoints (REQ-F2-08 / CS19-034 / Architecture Doc Page 6)
+# =========================================================================
+
+@router.get(
+    "/stations/availability-markers",
+    response_model=StationAvailabilityMarkersResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get station availability markers (SW Architecture Route)",
+    description=(
+        "Retrieves colour-coded availability markers for stations showing available/total connectors "
+        "and accessible status text labels (REQ-F2-08 / CS19-034)."
+    ),
+)
+def get_availability_markers(
+    station_id: int | None = Query(default=None, description="Optional specific station ID"),
+    latitude: float | None = Query(default=None, ge=-90.0, le=90.0, description="Optional center latitude"),
+    longitude: float | None = Query(default=None, ge=-180.0, le=180.0, description="Optional center longitude"),
+    radius_km: float = Query(default=10.0, ge=1.0, le=50.0, description="Radius in km [1.0, 50.0]"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationAvailabilityMarkersResponse:
+    return DiscoveryService.get_availability_markers(
+        db=db,
+        station_id=station_id,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        user=current_user,
+    )
+
+
+@router.patch(
+    "/stations/availability-markers",
+    response_model=StationAvailabilityMarkersResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Batch query availability markers via PATCH (SW Architecture Route)",
+    description="Matching SW Architecture Page 6 PATCH method: Batch retrieve availability markers for station IDs.",
+)
+def patch_availability_markers(
+    payload: BatchAvailabilityMarkersRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationAvailabilityMarkersResponse:
+    return DiscoveryService.get_availability_markers(
+        db=db,
+        station_ids=payload.station_ids,
+        user=current_user,
+    )
+
+
+@router.post(
+    "/stations/availability-markers",
+    response_model=StationAvailabilityMarkersResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Batch query availability markers via POST",
+    description="Batch retrieve availability markers for a list of station IDs (REQ-F2-08).",
+)
+def post_availability_markers(
+    payload: BatchAvailabilityMarkersRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationAvailabilityMarkersResponse:
+    return DiscoveryService.get_availability_markers(
+        db=db,
+        station_ids=payload.station_ids,
+        user=current_user,
+    )
+
+
+@router.get(
+    "/stations/{station_id}/availability-marker",
+    response_model=StationAvailabilityMarker,
+    status_code=status.HTTP_200_OK,
+    summary="Get single station availability marker",
+    description="Retrieves the colour-coded availability marker for a specific station (REQ-F2-08).",
+)
+def get_single_station_availability_marker(
+    station_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationAvailabilityMarker:
+    response = DiscoveryService.get_availability_markers(
+        db=db,
+        station_id=station_id,
+        user=current_user,
+    )
+    if not response.markers:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Station with ID {station_id} not found or not active.",
+        )
+    return response.markers[0]
+
 
