@@ -29,9 +29,14 @@ from app.schemas.maintenance import (
     MaintenanceWindowResponse,
     MaintenanceWindowListResponse,
 )
+from app.schemas.discovery import (
+    NearbyStationSearchRequest,
+    NearbyStationSearchResponse,
+)
 from app.services.station_service import StationService
 from app.services.charger_service import ChargerService
 from app.services.maintenance_service import MaintenanceService
+from app.services.discovery_service import DiscoveryService
 
 router = APIRouter(prefix="/stations", tags=["Stations"])
 
@@ -388,6 +393,71 @@ def get_station_maintenance_windows(
     return MaintenanceWindowListResponse(
         total=total,
         items=[MaintenanceWindowResponse.model_validate(w) for w in items],
+    )
+
+
+@router.get(
+    "/nearby-station-search",
+    response_model=NearbyStationSearchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Nearby station search (SW Architecture Route)",
+    description=(
+        "Displays nearby stations on a map and in a list based on driver's location "
+        "within a selectable radius (default 10 km, range 1 to 50 km) (REQ-F2-07 / CS19-033)."
+    ),
+)
+def get_station_nearby_search(
+    latitude: float = Query(
+        ...,
+        ge=-90.0,
+        le=90.0,
+        description="Driver latitude coordinate [-90.0, 90.0]",
+    ),
+    longitude: float = Query(
+        ...,
+        ge=-180.0,
+        le=180.0,
+        description="Driver longitude coordinate [-180.0, 180.0]",
+    ),
+    radius_km: float = Query(
+        default=10.0,
+        ge=1.0,
+        le=50.0,
+        description="Search radius in kilometers [1.0, 50.0] (default: 10.0 km)",
+    ),
+    limit: int = Query(default=50, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> NearbyStationSearchResponse:
+    return DiscoveryService.get_nearby_stations(
+        db=db,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        limit=limit,
+        user=current_user,
+    )
+
+
+@router.post(
+    "/nearby-station-search",
+    response_model=NearbyStationSearchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Nearby station search with JSON payload",
+    description="POST alternative to query nearby stations using request body (REQ-F2-07).",
+)
+def post_station_nearby_search(
+    payload: NearbyStationSearchRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> NearbyStationSearchResponse:
+    return DiscoveryService.get_nearby_stations(
+        db=db,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        radius_km=payload.radius_km,
+        limit=payload.limit,
+        user=current_user,
     )
 
 
