@@ -60,3 +60,4 @@ class Station(Base):
     )
 
     operator = relationship("User", back_populates="stations")
+    chargers = relationship("Charger", back_populates="station", cascade="all, delete-orphan")

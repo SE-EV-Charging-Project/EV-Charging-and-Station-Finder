@@ -218,13 +218,14 @@ def validate_charger_values(
 
     # 2. Current type (AC or DC)
     if "current_type" in data and data["current_type"] is not None:
-        current_type = str(data["current_type"]).strip().upper()
+        ct_raw = data["current_type"]
+        current_type = str(ct_raw.value if hasattr(ct_raw, "value") else ct_raw).strip().upper()
         if current_type not in valid_current_types:
             errors["current_type"] = f"Current type must be 'AC' or 'DC'. Received: {data['current_type']}"
     elif not partial:
         errors["current_type"] = "Current type (AC/DC) is required (REQ-F2-04)."
 
-    # 3. Connector type
+    # 3. Connector type or connectors list
     if "connector_type" in data and data["connector_type"] is not None:
         conn_raw = str(data["connector_type"]).strip()
         matched = False
@@ -237,6 +238,17 @@ def validate_charger_values(
             errors["connector_type"] = (
                 f"Invalid connector type '{conn_raw}'. Must be one of: {allowed_str} (REQ-F2-04)."
             )
+    elif "connectors" in data and data["connectors"] is not None:
+        for idx, conn in enumerate(data["connectors"]):
+            conn_type = conn.get("connector_type") if isinstance(conn, dict) else getattr(conn, "connector_type", None)
+            if conn_type:
+                conn_val = str(conn_type.value if hasattr(conn_type, "value") else conn_type).strip()
+                matched = any(conn_val.lower() == valid.lower() for valid in valid_connectors)
+                if not matched:
+                    allowed_str = ", ".join(sorted(valid_connectors))
+                    errors[f"connectors[{idx}].connector_type"] = (
+                        f"Invalid connector type '{conn_val}'. Must be one of: {allowed_str} (REQ-F2-04)."
+                    )
     elif not partial:
         errors["connector_type"] = "Connector type is required (REQ-F2-04)."
 
@@ -294,3 +306,4 @@ def get_station_validation_rules() -> dict[str, Any]:
         "station_rules": APPENDIX_B_STATION_RULES,
         "charger_rules": APPENDIX_B_CHARGER_RULES,
     }
+
