@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_operator, get_current_user
+from app.api.deps import require_operator, require_admin, get_current_user
 from app.db.session import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.station import StationStatus
 from app.schemas.station import (
     StationCreateRequest,
@@ -16,6 +16,10 @@ from app.schemas.station import (
     StationValidationCheckResponse,
     ChargerValidationCheckRequest,
     ChargerValidationCheckResponse,
+    StationRejectRequest,
+    StationApprovalResponse,
+    StationApprovalGateStatusResponse,
+    StationApprovalGateActionRequest,
 )
 from app.services.station_service import StationService
 
@@ -49,8 +53,8 @@ def create_station(
     "",
     response_model=StationListResponse,
     status_code=status.HTTP_200_OK,
-    summary="List operator stations",
-    description="Returns stations scoped to the authenticated operator (REQ-F1-12). Administrators see all stations.",
+    summary="List stations",
+    description="Returns stations with role scoping: Operators view own stations (REQ-F1-12), Admins view all, Drivers view approved active stations (REQ-F2-03).",
 )
 def list_stations(
     page: int = Query(1, ge=1, description="Page number"),
@@ -58,7 +62,7 @@ def list_stations(
     is_active: bool | None = Query(None, description="Filter by active status"),
     status_filter: StationStatus | None = Query(None, alias="status", description="Filter by approval status"),
     q: str | None = Query(None, description="Search term for station name or address"),
-    current_user: User = Depends(require_operator),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StationListResponse:
     items, total = StationService.list_stations(
@@ -75,6 +79,114 @@ def list_stations(
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.get(
+    "/pending-approval",
+    response_model=StationListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List stations pending administrator approval",
+    description="Returns all stations with status=pending awaiting administrative moderation review (REQ-F2-03 / CS19-029). Restricted to Administrators.",
+)
+def list_pending_stations(
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> StationListResponse:
+    items, total = StationService.list_pending_stations(
+        db=db,
+        admin=current_user,
+        page=page,
+        page_size=page_size,
+    )
+    return StationListResponse(
+        items=[StationResponse.model_validate(s) for s in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get(
+    "/station-approval-gate",
+    response_model=StationApprovalGateStatusResponse | StationListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Station approval gate inspection (SW Architecture Route)",
+    description="Matching SW Architecture Page 6: Inspect approval gate and driver visibility status (REQ-F2-03 / CS19-029).",
+)
+def get_station_approval_gate(
+    station_id: int | None = Query(None, description="Optional specific station ID to inspect"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if station_id is not None:
+        status_data = StationService.get_approval_gate_status(
+            db=db, user=current_user, station_id=station_id
+        )
+        return StationApprovalGateStatusResponse(**status_data)
+
+    if current_user.role == UserRole.ADMIN:
+        items, total = StationService.list_pending_stations(
+            db=db, admin=current_user, page=page, page_size=page_size
+        )
+        return StationListResponse(
+            items=[StationResponse.model_validate(s) for s in items],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+    else:
+        items, total = StationService.list_stations(
+            db=db, user=current_user, page=page, page_size=page_size
+        )
+        return StationListResponse(
+            items=[StationResponse.model_validate(s) for s in items],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+
+
+@router.post(
+    "/station-approval-gate",
+    response_model=StationApprovalResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Process station approval gate action (SW Architecture Route)",
+    description="Matching SW Architecture Page 6: Approve or reject station via moderation action (REQ-F2-03 / CS19-029).",
+)
+def post_station_approval_gate(
+    payload: StationApprovalGateActionRequest,
+    request: Request,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> StationApprovalResponse:
+    client_ip = request.client.host if request.client else None
+    station = StationService.process_gate_action(
+        db=db,
+        admin=current_user,
+        station_id=payload.station_id,
+        action=payload.action,
+        reason=payload.reason,
+        ip_address=client_ip,
+    )
+    msg = (
+        f"Station '{station.name}' successfully approved and is now visible to drivers."
+        if station.status == StationStatus.APPROVED
+        else f"Station '{station.name}' rejected: {station.rejection_reason}"
+    )
+    return StationApprovalResponse(
+        id=station.id,
+        name=station.name,
+        status=station.status,
+        is_active=station.is_active,
+        rejection_reason=station.rejection_reason,
+        reviewed_by_admin_id=station.reviewed_by_admin_id,
+        reviewed_at=station.reviewed_at,
+        message=msg,
     )
 
 
@@ -154,11 +266,11 @@ def validate_charger_check(
     response_model=StationResponse,
     status_code=status.HTTP_200_OK,
     summary="Get station details",
-    description="Retrieves station details. Operators can access only their own stations (REQ-F1-12, REQ-F2-01).",
+    description="Retrieves station details. Operators can access only their own stations (REQ-F1-12, REQ-F2-01). Drivers can view approved active stations; unapproved/inactive are hidden (REQ-F2-03).",
 )
 def get_station(
     station_id: int,
-    current_user: User = Depends(require_operator),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StationResponse:
     station = StationService.get_station(
@@ -248,3 +360,90 @@ def deactivate_station_action(
         is_active=station.is_active,
         status=station.status,
     )
+
+
+@router.post(
+    "/{station_id}/approve",
+    response_model=StationApprovalResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Approve station by Administrator",
+    description="Transitions station status to 'approved', making it visible to drivers (REQ-F2-03 / CS19-029). Restricted to Administrators.",
+)
+def approve_station(
+    station_id: int,
+    request: Request,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> StationApprovalResponse:
+    client_ip = request.client.host if request.client else None
+    station = StationService.approve_station(
+        db=db,
+        admin=current_user,
+        station_id=station_id,
+        ip_address=client_ip,
+    )
+    return StationApprovalResponse(
+        id=station.id,
+        name=station.name,
+        status=station.status,
+        is_active=station.is_active,
+        rejection_reason=station.rejection_reason,
+        reviewed_by_admin_id=station.reviewed_by_admin_id,
+        reviewed_at=station.reviewed_at,
+        message=f"Station '{station.name}' successfully approved and made visible to drivers (REQ-F2-03).",
+    )
+
+
+@router.post(
+    "/{station_id}/reject",
+    response_model=StationApprovalResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Reject station by Administrator",
+    description="Transitions station status to 'rejected' with a mandatory reason; station remains hidden from drivers (REQ-F2-03 / CS19-029). Restricted to Administrators.",
+)
+def reject_station(
+    station_id: int,
+    payload: StationRejectRequest,
+    request: Request,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> StationApprovalResponse:
+    client_ip = request.client.host if request.client else None
+    station = StationService.reject_station(
+        db=db,
+        admin=current_user,
+        station_id=station_id,
+        reason=payload.reason,
+        ip_address=client_ip,
+    )
+    return StationApprovalResponse(
+        id=station.id,
+        name=station.name,
+        status=station.status,
+        is_active=station.is_active,
+        rejection_reason=station.rejection_reason,
+        reviewed_by_admin_id=station.reviewed_by_admin_id,
+        reviewed_at=station.reviewed_at,
+        message=f"Station '{station.name}' rejected: {station.rejection_reason} (REQ-F2-03).",
+    )
+
+
+@router.get(
+    "/{station_id}/approval-status",
+    response_model=StationApprovalGateStatusResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get station approval gate status",
+    description="Inspects whether a station is approved, pending, or rejected, and its visibility to drivers (REQ-F2-03 / CS19-029).",
+)
+def get_station_approval_status(
+    station_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationApprovalGateStatusResponse:
+    data = StationService.get_approval_gate_status(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+    )
+    return StationApprovalGateStatusResponse(**data)
+

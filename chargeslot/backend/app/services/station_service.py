@@ -17,6 +17,7 @@ from app.stations.validators import (
     validate_charger_values,
     get_station_validation_rules,
 )
+from app.stations.moderation import StationModerationService
 
 
 class StationService:
@@ -85,18 +86,25 @@ class StationService:
         page_size: int = 20,
     ) -> tuple[list[Station], int]:
         """
-        Lists stations with role-based scoping (REQ-F1-12):
-        - Station Operators view only their own stations.
+        Lists stations with role-based scoping:
+        - Station Operators view only their own stations (REQ-F1-12).
         - Administrators view all stations across operators.
-        - Drivers / other roles are denied with HTTP 403.
+        - Drivers view only approved active stations (REQ-F2-03).
         """
         query = db.query(Station)
-        query = scope_operator_query(query, Station, user, operator_id_attr="operator_id")
+        if user.role == UserRole.DRIVER:
+            # REQ-F2-03: Hidden from drivers until approved and active
+            query = query.filter(
+                Station.status == StationStatus.APPROVED,
+                Station.is_active.is_(True),
+            )
+        else:
+            query = scope_operator_query(query, Station, user, operator_id_attr="operator_id")
 
-        if is_active is not None:
+        if is_active is not None and user.role != UserRole.DRIVER:
             query = query.filter(Station.is_active == is_active)
 
-        if status_filter is not None:
+        if status_filter is not None and user.role != UserRole.DRIVER:
             query = query.filter(Station.status == status_filter)
 
         if search_query:
@@ -124,7 +132,10 @@ class StationService:
         station_id: int,
     ) -> Station:
         """
-        Retrieves a station by ID with operator tenancy verification (REQ-F1-12, REQ-F2-01).
+        Retrieves a station by ID with role-based scoping:
+        - Operators can access only their own stations (REQ-F1-12).
+        - Drivers can view only approved active stations; unapproved/inactive are hidden (REQ-F2-03).
+        - Administrators have global access across stations.
         """
         station = db.query(Station).filter(Station.id == station_id).first()
         if not station:
@@ -133,8 +144,23 @@ class StationService:
                 detail=f"Station with ID {station_id} not found.",
             )
 
-        enforce_operator_scope(user, station.operator_id)
-        return station
+        if user.role == UserRole.ADMIN:
+            return station
+        elif user.role == UserRole.OPERATOR:
+            enforce_operator_scope(user, station.operator_id)
+            return station
+        elif user.role == UserRole.DRIVER:
+            if not StationModerationService.is_station_visible_to_drivers(station):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Station not found or pending administrative approval (REQ-F2-03).",
+                )
+            return station
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied.",
+            )
 
     @staticmethod
     def update_station(
@@ -248,4 +274,76 @@ class StationService:
         Validates charger and connector fields without database modification (dry-run check).
         """
         return validate_charger_values(data, partial=partial)
+
+    @staticmethod
+    def approve_station(
+        db: Session,
+        admin: User,
+        station_id: int,
+        ip_address: str | None = None,
+    ) -> Station:
+        """
+        Approves a station by Administrator (REQ-F2-03 / CS19-029).
+        """
+        return StationModerationService.approve_station(
+            db=db, admin=admin, station_id=station_id, ip_address=ip_address
+        )
+
+    @staticmethod
+    def reject_station(
+        db: Session,
+        admin: User,
+        station_id: int,
+        reason: str,
+        ip_address: str | None = None,
+    ) -> Station:
+        """
+        Rejects a station by Administrator with reason (REQ-F2-03 / CS19-029).
+        """
+        return StationModerationService.reject_station(
+            db=db, admin=admin, station_id=station_id, reason=reason, ip_address=ip_address
+        )
+
+    @staticmethod
+    def list_pending_stations(
+        db: Session,
+        admin: User,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[Station], int]:
+        """
+        Lists pending stations for moderation review (REQ-F2-03 / CS19-029).
+        """
+        return StationModerationService.list_pending_stations(
+            db=db, admin=admin, page=page, page_size=page_size
+        )
+
+    @staticmethod
+    def get_approval_gate_status(
+        db: Session,
+        user: User,
+        station_id: int,
+    ) -> dict:
+        """
+        Gets approval gate status (REQ-F2-03 / CS19-029).
+        """
+        return StationModerationService.get_approval_gate_status(
+            db=db, user=user, station_id=station_id
+        )
+
+    @staticmethod
+    def process_gate_action(
+        db: Session,
+        admin: User,
+        station_id: int,
+        action: str,
+        reason: str | None = None,
+        ip_address: str | None = None,
+    ) -> Station:
+        """
+        Processes an approval gate action (approve or reject) (REQ-F2-03 / CS19-029).
+        """
+        return StationModerationService.process_gate_action(
+            db=db, admin=admin, station_id=station_id, action=action, reason=reason, ip_address=ip_address
+        )
 
