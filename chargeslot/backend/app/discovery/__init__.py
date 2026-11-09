@@ -14,6 +14,7 @@ from app.discovery.views import (
     HEX_RED,
     HEX_GREY,
 )
+from app.discovery.filters import apply_station_filters
 
 __all__ = [
     "haversine_distance",
@@ -28,5 +29,6 @@ __all__ = [
     "HEX_AMBER",
     "HEX_RED",
     "HEX_GREY",
+    "apply_station_filters",
 ]
 
