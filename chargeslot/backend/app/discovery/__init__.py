@@ -15,6 +15,12 @@ from app.discovery.views import (
     HEX_GREY,
 )
 from app.discovery.filters import apply_station_filters
+from app.discovery.sorting import (
+    sort_station_items,
+    validate_sort_params,
+    search_and_sort_stations,
+    DEFAULT_SORT_ORDERS,
+)
 
 __all__ = [
     "haversine_distance",
@@ -30,5 +36,9 @@ __all__ = [
     "HEX_RED",
     "HEX_GREY",
     "apply_station_filters",
+    "sort_station_items",
+    "validate_sort_params",
+    "search_and_sort_stations",
+    "DEFAULT_SORT_ORDERS",
 ]
 

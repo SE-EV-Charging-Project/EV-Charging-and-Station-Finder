@@ -34,6 +34,8 @@ def apply_station_filters(
     latitude: float | None = None,
     longitude: float | None = None,
     radius_km: float = DEFAULT_SEARCH_RADIUS_KM,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[int, dict[str, Any], list[NearbyStationItem]]:
@@ -183,6 +185,12 @@ def apply_station_filters(
             if not has_all_amenities:
                 continue
 
+        # Filter F: Maximum Price per kWh (REQ-F2-09 / REQ-F2-10)
+        if max_price_kwh is not None:
+            station_price = getattr(station, "price_per_kwh", None)
+            if station_price is not None and station_price > max_price_kwh:
+                continue
+
         # Compute marker info for consistent presentation
         marker = compute_station_marker(station)
         connector_types_display = sorted(
@@ -217,14 +225,24 @@ def apply_station_filters(
             available_connectors=len(avail_connectors),
             connector_types=connector_types_display,
             max_power_kw=max_p_display,
+            price_per_kwh=getattr(station, "price_per_kwh", None),
             color_code=marker.color_code.value,
             status_label=marker.status_label,
             badge_text=marker.badge_text,
         )
         matching_items.append(item)
 
-    # Sort matching stations (by distance if location given, else by ID)
-    if has_location:
+    # Sort matching stations (per REQ-F2-10 if sort_by provided, else distance/id)
+    if sort_by is not None:
+        from app.discovery.sorting import sort_station_items
+        matching_items, applied_sort_by, applied_sort_order = sort_station_items(
+            items=matching_items,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        applied_filters["sort_by"] = applied_sort_by
+        applied_filters["sort_order"] = applied_sort_order
+    elif has_location:
         matching_items.sort(key=lambda s: s.distance_km)
     else:
         matching_items.sort(key=lambda s: s.id)
