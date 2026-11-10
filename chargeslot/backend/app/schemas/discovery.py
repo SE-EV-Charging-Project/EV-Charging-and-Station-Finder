@@ -289,4 +289,56 @@ class StationTextSearchResponse(BaseModel):
     stations: list[NearbyStationItem]
 
 
+class StationClusterItem(BaseModel):
+    """
+    Aggregated spatial cluster of EV stations on map view when >50 stations are in view (REQ-F2-12 / CS19-038).
+    """
+    cluster_id: str
+    latitude: float
+    longitude: float
+    station_count: int
+    total_connectors: int
+    available_connectors: int
+    color_code: str
+    badge_text: str
+    station_ids: list[int]
+    bounds: list[float] | None = None
+
+
+class ClusteredMapViewResponse(BaseModel):
+    """
+    Response model for map view with marker clustering (REQ-F2-12 / CS19-038).
+    When total_stations <= 50, is_clustered is False and individual_stations are returned.
+    When total_stations > 50, is_clustered is True and clusters are returned.
+    """
+    is_clustered: bool
+    threshold: int = 50
+    total_stations: int
+    clusters: list[StationClusterItem] = Field(default_factory=list)
+    individual_stations: list[NearbyStationItem] = Field(default_factory=list)
+
+
+class ClusteredMapViewRequest(BaseModel):
+    """
+    Request payload for querying map view with clustering (REQ-F2-12).
+    """
+    latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
+    longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
+    radius_km: float = Field(default=50.0, ge=1.0, le=50.0)
+    threshold: int = Field(default=50, ge=1, le=100)
+
+
+class PaginatedStationListResponse(BaseModel):
+    """
+    Standard paginated list response with 20 items/page default per REQ-F2-12.
+    """
+    total: int
+    page: int = 1
+    page_size: int = 20
+    total_pages: int
+    has_next: bool
+    has_prev: bool
+    items: list[NearbyStationItem]
+
+
 

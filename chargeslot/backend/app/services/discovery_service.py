@@ -10,6 +10,8 @@ from app.schemas.discovery import (
     StationSortBy,
     SortOrder,
     StationTextSearchResponse,
+    ClusteredMapViewResponse,
+    PaginatedStationListResponse,
 )
 from app.discovery.search import (
     search_nearby_stations,
@@ -19,6 +21,12 @@ from app.discovery.views import get_station_markers
 from app.discovery.filters import apply_station_filters
 from app.discovery.sorting import search_and_sort_stations
 from app.discovery.text_search import search_stations_by_text
+from app.discovery.clustering import (
+    get_clustered_map_view,
+    paginate_items,
+    DEFAULT_PAGE_SIZE,
+    CLUSTERING_THRESHOLD,
+)
 
 
 class DiscoveryService:
@@ -199,5 +207,70 @@ class DiscoveryService:
             query=clean_q,
             total=total,
             stations=stations,
+        )
+
+    @staticmethod
+    def get_map_view(
+        db: Session,
+        user: User | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        radius_km: float = 50.0,
+        threshold: int = CLUSTERING_THRESHOLD,
+    ) -> ClusteredMapViewResponse:
+        """
+        Retrieves map view stations, clustering markers when >50 stations are in view (REQ-F2-12 / CS19-038).
+        """
+        return get_clustered_map_view(
+            db=db,
+            user=user,
+            latitude=latitude,
+            longitude=longitude,
+            radius_km=radius_km,
+            threshold=threshold,
+        )
+
+    @staticmethod
+    def get_paginated_stations(
+        db: Session,
+        user: User | None = None,
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        radius_km: float = DEFAULT_SEARCH_RADIUS_KM,
+        sort_by: str | None = None,
+        sort_order: str | None = None,
+    ) -> PaginatedStationListResponse:
+        """
+        Retrieves paginated station list results (20/page by default) per REQ-F2-12 / CS19-038.
+        """
+        # Fetch all stations matching criteria then slice per page
+        total, s_by, s_order, all_stations = search_and_sort_stations(
+            db=db,
+            user=user,
+            sort_by=sort_by or "distance",
+            sort_order=sort_order,
+            latitude=latitude,
+            longitude=longitude,
+            radius_km=radius_km,
+            limit=1000,
+            offset=0,
+        )
+
+        items, total_count, total_pages, has_next, has_prev = paginate_items(
+            items=all_stations,
+            page=page,
+            page_size=page_size,
+        )
+
+        return PaginatedStationListResponse(
+            total=total_count,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+            has_next=has_next,
+            has_prev=has_prev,
+            items=items,
         )
 
