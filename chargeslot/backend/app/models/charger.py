@@ -48,6 +48,9 @@ class Charger(Base):
     gateway_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
     is_out_of_service: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    out_of_service_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    expected_return_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    out_of_service_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
