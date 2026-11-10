@@ -21,6 +21,10 @@ from app.discovery.sorting import (
     search_and_sort_stations,
     DEFAULT_SORT_ORDERS,
 )
+from app.discovery.text_search import (
+    search_stations_by_text,
+    validate_text_search_query,
+)
 
 __all__ = [
     "haversine_distance",
@@ -40,5 +44,7 @@ __all__ = [
     "validate_sort_params",
     "search_and_sort_stations",
     "DEFAULT_SORT_ORDERS",
+    "search_stations_by_text",
+    "validate_text_search_query",
 ]
 

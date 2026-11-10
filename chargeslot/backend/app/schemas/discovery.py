@@ -261,4 +261,32 @@ class StationSortResponse(BaseModel):
     stations: list[NearbyStationItem]
 
 
+class StationTextSearchRequest(BaseModel):
+    """
+    Request payload for free-text station search (REQ-F2-11 / CS19-037).
+    """
+    query: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Search term matching station name, address, or area",
+    )
+    latitude: float | None = Field(default=None, ge=-90.0, le=90.0)
+    longitude: float | None = Field(default=None, ge=-180.0, le=180.0)
+    radius_km: float | None = Field(default=None, ge=1.0, le=50.0)
+    sort_by: str | None = Field(default=None, description="Optional sort criteria: distance, price, power, availability")
+    sort_order: str | None = Field(default=None, description="Optional sort direction: asc, desc")
+    limit: int = Field(default=50, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+
+
+class StationTextSearchResponse(BaseModel):
+    """
+    Structured free-text station search response (REQ-F2-11 / CS19-037).
+    """
+    query: str
+    total: int
+    stations: list[NearbyStationItem]
+
+
 
