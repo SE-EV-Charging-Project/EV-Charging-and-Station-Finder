@@ -1,0 +1,696 @@
+"""
+Unit and Integration Tests for Vehicle Battery Level Input.
+Requirement: REQ-F3-01
+Story ID: CS19-055
+Test Case ID: TC-F3-01
+System Test Case ID: STC-F3-01
+"""
+
+from datetime import datetime, timezone
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.booking.battery import (
+    compute_usable_range,
+    compute_estimated_range,
+    compute_energy_required,
+    enter_battery_level,
+    get_vehicle_battery,
+)
+from app.booking.validators import validate_battery_level_input, get_battery_rules
+from app.models.audit import AuditLog
+from app.models.user import User, UserRole
+from app.models.vehicle import Vehicle, ConnectorType
+from app.services.booking_service import BookingService
+from app.services.vehicle_service import VehicleService
+from app.utils.security import hash_password, create_access_token
+
+
+def make_token(user: User) -> str:
+    return create_access_token({
+        "sub": str(user.id),
+        "email": user.email,
+        "role": user.role.value if isinstance(user.role, UserRole) else str(user.role),
+    })
+
+
+@pytest.fixture
+def driver_alice(db_session: Session) -> User:
+    user = User(
+        name="Alice Driver",
+        email="alice.driver@example.com",
+        phone="+919876543201",
+        hashed_password=hash_password("AliceSecure123!"),
+        role=UserRole.DRIVER,
+        is_verified=True,
+        is_active=True,
+        default_target_battery=80,
+        low_battery_threshold=20,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
+def driver_bob(db_session: Session) -> User:
+    user = User(
+        name="Bob Driver",
+        email="bob.driver@example.com",
+        phone="+919876543202",
+        hashed_password=hash_password("BobSecure123!"),
+        role=UserRole.DRIVER,
+        is_verified=True,
+        is_active=True,
+        default_target_battery=85,
+        low_battery_threshold=25,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
+def operator_charlie(db_session: Session) -> User:
+    user = User(
+        name="Charlie Operator",
+        email="charlie.operator@example.com",
+        phone="+919876543203",
+        hashed_password=hash_password("CharlieOp123!"),
+        role=UserRole.OPERATOR,
+        is_verified=True,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
+def admin_dave(db_session: Session) -> User:
+    user = User(
+        name="Dave Admin",
+        email="dave.admin@example.com",
+        phone="+919876543204",
+        hashed_password=hash_password("DaveAdmin123!"),
+        role=UserRole.ADMIN,
+        is_verified=True,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
+def alice_vehicle(db_session: Session, driver_alice: User) -> Vehicle:
+    v = Vehicle(
+        user_id=driver_alice.id,
+        make="Tata",
+        model="Nexon EV",
+        battery_kwh=40.5,
+        connector_type=ConnectorType.CCS2,
+        max_ac_kw=7.2,
+        max_dc_kw=50.0,
+        consumption_kwh_100km=15.0,
+        registration_no="KA01EV1111",
+        is_default=True,
+        current_soc=None,
+    )
+    db_session.add(v)
+    db_session.commit()
+    db_session.refresh(v)
+    return v
+
+
+@pytest.fixture
+def bob_vehicle(db_session: Session, driver_bob: User) -> Vehicle:
+    v = Vehicle(
+        user_id=driver_bob.id,
+        make="MG",
+        model="ZS EV",
+        battery_kwh=50.3,
+        connector_type=ConnectorType.CCS2,
+        max_ac_kw=7.4,
+        max_dc_kw=80.0,
+        consumption_kwh_100km=16.5,
+        registration_no="MH02EV2222",
+        is_default=True,
+        current_soc=50,
+    )
+    db_session.add(v)
+    db_session.commit()
+    db_session.refresh(v)
+    return v
+
+
+# =========================================================================
+# TC-F3-01: Unit Tests for Calculation Rules (Appendix B.1 & B.2)
+# =========================================================================
+
+def test_tc_f3_01_usable_range_calculations():
+    """
+    Test usable driving range calculation:
+    max(0, (SoC_now - reserve) / 100 * battery_kWh) / (consumption_kWh_per_100km / 100), reserve = 10%.
+    """
+    # Tata Nexon: 40.5 kWh, 15 kWh/100km (factor = 0.15)
+    # 1. At 100% SoC: (100 - 10) / 100 * 40.5 / 0.15 = 0.9 * 40.5 / 0.15 = 243.0 km
+    assert compute_usable_range(40.5, 15.0, 100) == 243.0
+
+    # 2. At 50% SoC: (50 - 10) / 100 * 40.5 / 0.15 = 0.4 * 40.5 / 0.15 = 108.0 km
+    assert compute_usable_range(40.5, 15.0, 50) == 108.0
+
+    # 3. At 10% SoC (exactly reserve): usable range must be 0.0 km
+    assert compute_usable_range(40.5, 15.0, 10) == 0.0
+
+    # 4. Below reserve (e.g. 5% SoC): usable range must be capped at 0.0 km
+    assert compute_usable_range(40.5, 15.0, 5) == 0.0
+    assert compute_usable_range(40.5, 15.0, 0) == 0.0
+
+    # 5. Invalid battery specs return 0.0
+    assert compute_usable_range(0.0, 15.0, 50) == 0.0
+    assert compute_usable_range(40.5, 0.0, 50) == 0.0
+
+
+def test_tc_f3_01_estimated_range_calculations():
+    """
+    Test estimated driving range calculation without reserve deduction.
+    """
+    # 40.5 kWh / 0.15 = 270.0 km at 100%
+    assert compute_estimated_range(40.5, 15.0, 100) == 270.0
+    assert compute_estimated_range(40.5, 15.0, 50) == 135.0
+    assert compute_estimated_range(40.5, 15.0, None) == 270.0
+
+
+def test_tc_f3_01_energy_required_calculations():
+    """
+    Test energy required in kWh:
+    (target_soc - current_soc) / 100 * battery_kWh / 0.90 efficiency.
+    """
+    # 40.5 kWh, from 20% to 80% (60% delta):
+    # 0.60 * 40.5 / 0.90 = 24.3 / 0.90 = 27.0 kWh
+    assert compute_energy_required(40.5, current_soc=20, target_soc=80, efficiency=0.90) == 27.0
+
+    # From 80% to 80%: 0.0 kWh
+    assert compute_energy_required(40.5, current_soc=80, target_soc=80) == 0.0
+
+    # When current_soc exceeds target_soc: 0.0 kWh
+    assert compute_energy_required(40.5, current_soc=90, target_soc=80) == 0.0
+
+
+def test_tc_f3_01_validation_rules_and_boundary_checks():
+    """
+    Unit test validator function validate_battery_level_input.
+    """
+    # Valid values
+    soc, target = validate_battery_level_input(50, 80)
+    assert soc == 50
+    assert target == 80
+
+    # Boundary: 0% and 100%
+    soc0, _ = validate_battery_level_input(0)
+    assert soc0 == 0
+    soc100, _ = validate_battery_level_input(100)
+    assert soc100 == 100
+
+    # Float rounding
+    soc_float, _ = validate_battery_level_input(45.6)
+    assert soc_float == 46
+
+    # Out of range: < 0
+    with pytest.raises(Exception) as exc:
+        validate_battery_level_input(-1)
+    assert "between 0% and 100%" in str(exc.value)
+
+    # Out of range: > 100
+    with pytest.raises(Exception) as exc2:
+        validate_battery_level_input(101)
+    assert "between 0% and 100%" in str(exc2.value)
+
+    # Missing / None
+    with pytest.raises(Exception) as exc3:
+        validate_battery_level_input(None)
+    assert "mandatory" in str(exc3.value).lower()
+
+    # Non-numeric
+    with pytest.raises(Exception) as exc4:
+        validate_battery_level_input("full")
+    assert "numeric" in str(exc4.value).lower()
+
+
+# =========================================================================
+# TC-F3-01: Integration Tests via SW Architecture & REST Endpoints
+# =========================================================================
+
+def test_tc_f3_01_enter_battery_level_architecture_route(
+    client: TestClient, driver_alice: User, alice_vehicle: Vehicle
+):
+    """
+    TC-F3-01-01: Driver enters battery level via SW Architecture route:
+    POST /api/v1/bookings/battery-level-input (Page 7).
+    """
+    token = make_token(driver_alice)
+    payload = {
+        "vehicle_id": alice_vehicle.id,
+        "battery_level": 55,
+        "target_soc": 85,
+    }
+    resp = client.post(
+        "/api/v1/bookings/battery-level-input",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["vehicle_id"] == alice_vehicle.id
+    assert data["current_soc"] == 55
+    assert data["current_battery_percentage"] == 55
+    assert data["target_soc"] == 85
+    assert data["is_low_battery"] is False
+    assert data["usable_range_km"] > 0
+    assert data["estimated_range_km"] > data["usable_range_km"]
+    assert data["energy_required_kwh"] > 0
+    assert data["battery_updated_at"] is not None
+
+
+def test_tc_f3_01_update_battery_level_multiple_times(
+    client: TestClient, driver_alice: User, alice_vehicle: Vehicle
+):
+    """
+    TC-F3-01-02: Driver updates battery percentage whenever required.
+    Verify that subsequent updates overwrite the stored state and update ranges.
+    """
+    token = make_token(driver_alice)
+
+    # First update: 70%
+    r1 = client.patch(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 70},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r1.status_code == 200
+    assert r1.json()["current_soc"] == 70
+    range_at_70 = r1.json()["usable_range_km"]
+
+    # Second update: 30% (battery discharged after trip)
+    r2 = client.patch(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 30},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r2.status_code == 200
+    assert r2.json()["current_soc"] == 30
+    range_at_30 = r2.json()["usable_range_km"]
+    assert range_at_30 < range_at_70
+
+    # Third update: 90% (after charging)
+    r3 = client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 90},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r3.status_code == 200
+    assert r3.json()["current_soc"] == 90
+    assert r3.json()["usable_range_km"] > range_at_70
+
+
+def test_tc_f3_01_default_vehicle_auto_selection(
+    client: TestClient, driver_alice: User, alice_vehicle: Vehicle
+):
+    """
+    TC-F3-01-03: When vehicle_id is omitted, driver's primary default vehicle is automatically used.
+    """
+    token = make_token(driver_alice)
+    resp = client.post(
+        "/api/v1/bookings/battery-level-input",
+        json={"battery_level": 65},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["vehicle_id"] == alice_vehicle.id
+    assert data["current_soc"] == 65
+    assert data["target_soc"] == 80  # Default 80%
+
+
+def test_tc_f3_01_get_battery_level_persisted(
+    client: TestClient, driver_alice: User, alice_vehicle: Vehicle
+):
+    """
+    TC-F3-01-04: Retrieve persisted battery level via GET endpoints.
+    """
+    token = make_token(driver_alice)
+    # Set to 42%
+    client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 42, "target_soc": 90},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    # 1. Retrieve via GET /api/v1/bookings/battery-level-input?vehicle_id=...
+    r_arch = client.get(
+        f"/api/v1/bookings/battery-level-input?vehicle_id={alice_vehicle.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r_arch.status_code == 200
+    assert r_arch.json()["current_soc"] == 42
+    assert r_arch.json()["target_soc"] == 90
+
+    # 2. Retrieve via GET /api/v1/vehicles/{vehicle_id}/battery
+    r_veh = client.get(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r_veh.status_code == 200
+    assert r_veh.json()["current_soc"] == 42
+
+    # 3. Retrieve default vehicle battery via GET /api/v1/vehicles/battery-level
+    r_def = client.get(
+        "/api/v1/vehicles/battery-level",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r_def.status_code == 200
+    assert r_def.json()["vehicle_id"] == alice_vehicle.id
+    assert r_def.json()["current_soc"] == 42
+
+
+def test_tc_f3_01_low_battery_trigger_flag(
+    client: TestClient, driver_alice: User, alice_vehicle: Vehicle
+):
+    """
+    TC-F3-01-05: When battery level is at or below the low_battery_threshold (20%),
+    is_low_battery is flagged True (REQ-F3-20 / Appendix B.2).
+    """
+    token = make_token(driver_alice)
+
+    # 15% <= 20% -> is_low_battery True
+    r_low = client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 15},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r_low.status_code == 200
+    assert r_low.json()["is_low_battery"] is True
+
+    # 20% <= 20% -> is_low_battery True
+    r_exact = client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 20},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r_exact.status_code == 200
+    assert r_exact.json()["is_low_battery"] is True
+
+    # 21% > 20% -> is_low_battery False
+    r_above = client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 21},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r_above.status_code == 200
+    assert r_above.json()["is_low_battery"] is False
+
+
+def test_tc_f3_01_boundary_partitions(
+    client: TestClient, driver_alice: User, alice_vehicle: Vehicle
+):
+    """
+    TC-F3-01-06: Boundary value analysis (0%, 1%, 99%, 100%).
+    """
+    token = make_token(driver_alice)
+
+    for boundary_val in [0, 1, 99, 100]:
+        resp = client.post(
+            f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+            json={"battery_level": boundary_val},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["current_soc"] == boundary_val
+
+
+def test_tc_f3_01_reject_out_of_range_and_malformed_input(
+    client: TestClient, driver_alice: User, alice_vehicle: Vehicle
+):
+    """
+    TC-F3-01-07: Negative, out-of-range (>100), and non-numeric inputs are rejected with 422.
+    """
+    token = make_token(driver_alice)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Negative battery percentage
+    r_neg = client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": -5},
+        headers=headers,
+    )
+    assert r_neg.status_code == 422
+
+    # 2. Greater than 100%
+    r_over = client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 105},
+        headers=headers,
+    )
+    assert r_over.status_code == 422
+
+    # 3. String / malformed
+    r_str = client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": "fifty percent"},
+        headers=headers,
+    )
+    assert r_str.status_code == 422
+
+    # 4. Out of range target_soc
+    r_target_neg = client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 50, "target_soc": -10},
+        headers=headers,
+    )
+    assert r_target_neg.status_code == 422
+
+    r_target_over = client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 50, "target_soc": 110},
+        headers=headers,
+    )
+    assert r_target_over.status_code == 422
+
+
+def test_tc_f3_01_driver_isolation_and_foreign_vehicle_denied(
+    client: TestClient, driver_alice: User, driver_bob: User, bob_vehicle: Vehicle
+):
+    """
+    TC-F3-01-08: A driver cannot view or update the battery level of another user's vehicle (403 Forbidden).
+    """
+    alice_token = make_token(driver_alice)
+    headers = {"Authorization": f"Bearer {alice_token}"}
+
+    # Alice attempts to update Bob's vehicle battery
+    r_post = client.post(
+        f"/api/v1/vehicles/{bob_vehicle.id}/battery",
+        json={"battery_level": 60},
+        headers=headers,
+    )
+    assert r_post.status_code == 403
+
+    # Alice attempts to inspect Bob's vehicle battery
+    r_get = client.get(
+        f"/api/v1/vehicles/{bob_vehicle.id}/battery",
+        headers=headers,
+    )
+    assert r_get.status_code == 403
+
+    # Alice attempts to update Bob's vehicle via architecture route with vehicle_id
+    r_arch = client.post(
+        "/api/v1/bookings/battery-level-input",
+        json={"vehicle_id": bob_vehicle.id, "battery_level": 60},
+        headers=headers,
+    )
+    assert r_arch.status_code == 403
+
+
+def test_tc_f3_01_role_enforcement_and_unauthenticated(
+    client: TestClient, operator_charlie: User, alice_vehicle: Vehicle
+):
+    """
+    TC-F3-01-09: Unauthenticated requests return 401; Station Operator role returns 403 Forbidden.
+    """
+    # 1. Unauthenticated request
+    r_unauth = client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 50},
+    )
+    assert r_unauth.status_code == 401
+
+    # 2. Operator token
+    op_token = make_token(operator_charlie)
+    r_op = client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 50},
+        headers={"Authorization": f"Bearer {op_token}"},
+    )
+    assert r_op.status_code == 403
+    assert "Only drivers and administrators" in r_op.json()["detail"]
+
+
+def test_tc_f3_01_admin_can_update_vehicle_battery(
+    client: TestClient, admin_dave: User, alice_vehicle: Vehicle
+):
+    """
+    TC-F3-01-10: Administrator role has elevated access to view and update any vehicle's battery.
+    """
+    admin_token = make_token(admin_dave)
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    resp = client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 75, "target_soc": 95},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["current_soc"] == 75
+    assert resp.json()["target_soc"] == 95
+
+
+def test_tc_f3_01_nonexistent_vehicle_and_empty_garage(
+    client: TestClient, driver_alice: User, driver_bob: User, db_session: Session
+):
+    """
+    TC-F3-01-11: 404 Not Found for nonexistent vehicle ID or driver with no vehicles.
+    """
+    alice_token = make_token(driver_alice)
+    headers = {"Authorization": f"Bearer {alice_token}"}
+
+    # Nonexistent vehicle ID
+    r_notfound = client.post(
+        "/api/v1/vehicles/999999/battery",
+        json={"battery_level": 50},
+        headers=headers,
+    )
+    assert r_notfound.status_code == 404
+
+    # Driver with no vehicles
+    fresh_driver = User(
+        name="Empty Driver",
+        email="empty.driver@example.com",
+        phone="+919876543299",
+        hashed_password=hash_password("Empty123!"),
+        role=UserRole.DRIVER,
+        is_verified=True,
+        is_active=True,
+    )
+    db_session.add(fresh_driver)
+    db_session.commit()
+    db_session.refresh(fresh_driver)
+
+    fresh_token = make_token(fresh_driver)
+    r_empty = client.post(
+        "/api/v1/bookings/battery-level-input",
+        json={"battery_level": 50},
+        headers={"Authorization": f"Bearer {fresh_token}"},
+    )
+    assert r_empty.status_code == 404
+    assert "Driver does not have any registered vehicles" in r_empty.json()["detail"]
+
+
+def test_tc_f3_01_creates_audit_log(
+    client: TestClient, db_session: Session, driver_alice: User, alice_vehicle: Vehicle
+):
+    """
+    TC-F3-01-12: Battery level updates generate immutable audit log records.
+    """
+    token = make_token(driver_alice)
+    client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 60, "target_soc": 80},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    log = (
+        db_session.query(AuditLog)
+        .filter(AuditLog.user_id == driver_alice.id, AuditLog.action == "VEHICLE_BATTERY_UPDATE")
+        .first()
+    )
+    assert log is not None
+    assert f"vehicles/{alice_vehicle.id}" in log.resource
+    assert "60%" in log.details
+
+
+def test_tc_f3_01_vehicle_summary_card_reflects_battery(
+    client: TestClient, driver_alice: User, alice_vehicle: Vehicle
+):
+    """
+    TC-F3-01-13: Vehicle summary card reflects updated current_soc and adjusts usable range.
+    """
+    token = make_token(driver_alice)
+    # Set to 50%
+    client.post(
+        f"/api/v1/vehicles/{alice_vehicle.id}/battery",
+        json={"battery_level": 50},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    summary_res = client.get(
+        f"/api/v1/vehicles/{alice_vehicle.id}/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert summary_res.status_code == 200
+    card = summary_res.json()
+    assert card["current_soc"] == 50
+    # Tata Nexon (40.5 kWh, 15 kWh/100km): at 50% SoC usable range = 108.0 km
+    assert card["usable_range_km"] == 108.0
+
+
+def test_tc_f3_01_get_battery_rules_endpoint(client: TestClient):
+    """
+    TC-F3-01-14: GET /api/v1/bookings/battery-rules returns Appendix B rules.
+    """
+    res = client.get("/api/v1/bookings/battery-rules")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    rules = data["rules"]
+    assert "battery_level" in rules
+    assert rules["battery_level"]["min"] == 0
+    assert rules["battery_level"]["max"] == 100
+    assert rules["reserve"]["default"] == 10
+
+
+def test_tc_f3_01_direct_service_layer_unit_tests(
+    db_session: Session, driver_alice: User, driver_bob: User, alice_vehicle: Vehicle
+):
+    """
+    TC-F3-01-15: Direct unit testing of BookingService methods.
+    """
+    # 1. Update battery via BookingService
+    res = BookingService.set_battery_level(
+        db=db_session,
+        user=driver_alice,
+        battery_level=80,
+        vehicle_id=alice_vehicle.id,
+        target_soc=90,
+    )
+    assert res.current_soc == 80
+    assert res.target_soc == 90
+
+    # 2. Get battery via BookingService
+    res_get = BookingService.get_battery_level(
+        db=db_session,
+        user=driver_alice,
+        vehicle_id=alice_vehicle.id,
+    )
+    assert res_get.current_soc == 80
+
+    # 3. BookingService range & energy calculations
+    usable = BookingService.calculate_usable_range(40.5, 15.0, 80)
+    assert usable == round(((80 - 10) / 100.0 * 40.5) / 0.15, 1)
+
+    energy = BookingService.calculate_energy_required(40.5, 20, 80)
+    assert energy == 27.0

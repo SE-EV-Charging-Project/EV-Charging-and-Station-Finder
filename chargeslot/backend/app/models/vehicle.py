@@ -36,6 +36,19 @@ class Vehicle(Base):
     registration_no: Mapped[str | None] = mapped_column(String(15), nullable=True, index=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # Battery & State of Charge (REQ-F3-01 / CS19-055 / Appendix B.1, B.2)
+    current_soc: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    target_soc: Mapped[int] = mapped_column(Integer, default=80, nullable=False)
+    battery_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    @property
+    def current_battery_percentage(self) -> int | None:
+        return self.current_soc
+
+    @current_battery_percentage.setter
+    def current_battery_percentage(self, value: int | None) -> None:
+        self.current_soc = value
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

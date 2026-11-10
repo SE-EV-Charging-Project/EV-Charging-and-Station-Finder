@@ -114,6 +114,9 @@ class VehicleResponse(BaseModel):
     consumption_kwh_100km: float
     registration_no: str | None = None
     is_default: bool
+    current_soc: int | None = None
+    target_soc: int | None = 80
+    battery_updated_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -173,6 +176,9 @@ class VehicleSummaryCardResponse(BaseModel):
     consumption_kwh_100km: float
     estimated_range_km: float
     usable_range_km: float
+    current_soc: int | None = None
+    target_soc: int | None = 80
+    battery_updated_at: datetime | None = None
     compatibility_badges: list[str]
 
 

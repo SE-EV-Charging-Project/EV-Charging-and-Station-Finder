@@ -70,6 +70,12 @@ from app.schemas.charger import (
     StationOutOfServiceMarkingRequest,
 )
 
+from app.schemas.booking import (
+    BatteryLevelInputRequest,
+    BatteryLevelResponse,
+    BatteryRulesResponse,
+)
+
 __all__ = [
     "UserRegisterRequest",
     "UserLoginRequest",
@@ -131,4 +137,7 @@ __all__ = [
     "ChargerReturnToServiceRequest",
     "ChargerOutOfServiceResponse",
     "StationOutOfServiceMarkingRequest",
+    "BatteryLevelInputRequest",
+    "BatteryLevelResponse",
+    "BatteryRulesResponse",
 ]

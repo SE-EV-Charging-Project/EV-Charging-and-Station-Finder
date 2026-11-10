@@ -24,6 +24,10 @@ from app.schemas.vehicle import (
     ApplyPresetResponse,
     ProtectBookedVehicleResponse,
 )
+from app.schemas.booking import (
+    BatteryLevelInputRequest,
+    BatteryLevelResponse,
+)
 from app.services.vehicle_service import VehicleService
 
 router = APIRouter(prefix="/vehicles", tags=["Vehicles"])
@@ -223,6 +227,54 @@ def get_vehicle_summary_card(
     return VehicleService.get_vehicle_summary(db=db, vehicle_id=vehicle_id, user=current_user)
 
 
+@router.post(
+    "/battery-level",
+    response_model=BatteryLevelResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Set battery level for default or specified vehicle",
+    description="Allows a driver to set their vehicle battery level (REQ-F3-01 / CS19-055).",
+)
+@router.patch(
+    "/battery-level",
+    response_model=BatteryLevelResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def update_default_or_specified_battery(
+    payload: BatteryLevelInputRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> BatteryLevelResponse:
+    client_ip = request.client.host if request.client else None
+    return VehicleService.update_battery_level(
+        db=db,
+        user=current_user,
+        battery_level=payload.battery_level,
+        vehicle_id=payload.vehicle_id,
+        target_soc=payload.target_soc,
+        ip_address=client_ip,
+    )
+
+
+@router.get(
+    "/battery-level",
+    response_model=BatteryLevelResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get battery level for default vehicle",
+    description="Retrieves battery level and range estimates for the driver's default vehicle (REQ-F3-01 / CS19-055).",
+)
+def get_default_battery(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> BatteryLevelResponse:
+    return VehicleService.get_battery_level(
+        db=db,
+        user=current_user,
+        vehicle_id=None,
+    )
+
+
 @router.get(
     "/{vehicle_id}",
     response_model=VehicleResponse,
@@ -302,5 +354,81 @@ def get_vehicle_booking_protection(
         vehicle_id=vehicle_id,
         user=current_user,
     )
+
+
+# ==============================================================================
+# Vehicle Battery Level Endpoints (CS19-055 / REQ-F3-01 / Appendix B.1, B.2)
+# ==============================================================================
+
+@router.post(
+    "/{vehicle_id}/battery",
+    response_model=BatteryLevelResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Set vehicle battery level",
+    description="Allows a driver to enter and update their current vehicle battery percentage (REQ-F3-01 / CS19-055).",
+)
+@router.patch(
+    "/{vehicle_id}/battery",
+    response_model=BatteryLevelResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Update vehicle battery level",
+    description="Allows a driver to update their vehicle battery percentage (REQ-F3-01 / CS19-055).",
+    include_in_schema=False,
+)
+@router.post(
+    "/{vehicle_id}/battery-level",
+    response_model=BatteryLevelResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+@router.patch(
+    "/{vehicle_id}/battery-level",
+    response_model=BatteryLevelResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def update_vehicle_battery(
+    vehicle_id: int,
+    payload: BatteryLevelInputRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> BatteryLevelResponse:
+    client_ip = request.client.host if request.client else None
+    return VehicleService.update_battery_level(
+        db=db,
+        user=current_user,
+        battery_level=payload.battery_level,
+        vehicle_id=vehicle_id,
+        target_soc=payload.target_soc,
+        ip_address=client_ip,
+    )
+
+
+@router.get(
+    "/{vehicle_id}/battery",
+    response_model=BatteryLevelResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get vehicle battery level",
+    description="Retrieves current battery level and range estimates for the specified vehicle (REQ-F3-01 / CS19-055).",
+)
+@router.get(
+    "/{vehicle_id}/battery-level",
+    response_model=BatteryLevelResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def get_vehicle_battery(
+    vehicle_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> BatteryLevelResponse:
+    return VehicleService.get_battery_level(
+        db=db,
+        user=current_user,
+        vehicle_id=vehicle_id,
+    )
+
+
 
 

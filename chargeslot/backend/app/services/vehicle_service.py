@@ -582,10 +582,11 @@ class VehicleService:
         fast_charging = vehicle.max_dc_kw >= 50.0
 
         # Calculations from Appendix B.1
-        # Usable range = (100 - reserve) / 100 * battery_kwh / (consumption / 100), where reserve = 10%
+        # Usable range = (SoC - reserve) / 100 * battery_kwh / (consumption / 100), where reserve = 10%
         factor_100 = vehicle.consumption_kwh_100km / 100.0
-        estimated_range = round(vehicle.battery_kwh / factor_100, 1)
-        usable_range = round(((100.0 - 10.0) / 100.0 * vehicle.battery_kwh) / factor_100, 1)
+        soc = vehicle.current_soc if vehicle.current_soc is not None else 100
+        estimated_range = round(((soc / 100.0) * vehicle.battery_kwh) / factor_100, 1)
+        usable_range = round((max(0.0, float(soc - 10)) / 100.0 * vehicle.battery_kwh) / factor_100, 1)
 
         # Compatibility badges
         badges = [
@@ -621,6 +622,9 @@ class VehicleService:
             consumption_kwh_100km=vehicle.consumption_kwh_100km,
             estimated_range_km=estimated_range,
             usable_range_km=usable_range,
+            current_soc=vehicle.current_soc,
+            target_soc=vehicle.target_soc if vehicle.target_soc is not None else 80,
+            battery_updated_at=vehicle.battery_updated_at,
             compatibility_badges=badges,
         )
 
@@ -675,3 +679,46 @@ class VehicleService:
             tenancy_status="isolated",
             message="Driver data isolation verified: only own profile and vehicles accessible (REQ-F1-26).",
         )
+
+    # ==========================================================================
+    # Battery Level Management (CS19-055 / REQ-F3-01 / Appendix B.1, B.2)
+    # ==========================================================================
+
+    @staticmethod
+    def update_battery_level(
+        db: Session,
+        user: User,
+        battery_level: int,
+        vehicle_id: int | None = None,
+        target_soc: int | None = None,
+        ip_address: str | None = None,
+    ):
+        """
+        Record or update vehicle battery percentage (State of Charge) (REQ-F3-01 / CS19-055).
+        """
+        from app.booking.battery import enter_battery_level
+        return enter_battery_level(
+            db=db,
+            user=user,
+            vehicle_id=vehicle_id,
+            battery_level=battery_level,
+            target_soc=target_soc,
+            ip_address=ip_address,
+        )
+
+    @staticmethod
+    def get_battery_level(
+        db: Session,
+        user: User,
+        vehicle_id: int | None = None,
+    ):
+        """
+        Retrieve vehicle battery percentage and range calculations (REQ-F3-01 / CS19-055).
+        """
+        from app.booking.battery import get_vehicle_battery
+        return get_vehicle_battery(
+            db=db,
+            user=user,
+            vehicle_id=vehicle_id,
+        )
+
