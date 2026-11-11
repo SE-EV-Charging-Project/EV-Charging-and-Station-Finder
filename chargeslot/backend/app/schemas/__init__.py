@@ -104,6 +104,10 @@ from app.schemas.discovery import (
     StationDetailConnectorItem,
     StationDetailChargerItem,
     StationDetailResponse,
+    FavouriteStationRequest,
+    FavouriteStationItem,
+    FavouriteStationActionResponse,
+    FavouriteStationListResponse,
 )
 
 __all__ = [
@@ -197,4 +201,8 @@ __all__ = [
     "StationDetailConnectorItem",
     "StationDetailChargerItem",
     "StationDetailResponse",
+    "FavouriteStationRequest",
+    "FavouriteStationItem",
+    "FavouriteStationActionResponse",
+    "FavouriteStationListResponse",
 ]

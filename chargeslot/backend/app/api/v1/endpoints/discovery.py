@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Path, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Path, Query, Request, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -22,6 +22,9 @@ from app.schemas.discovery import (
     ClusteredMapViewResponse,
     PaginatedStationListResponse,
     StationDetailResponse,
+    FavouriteStationRequest,
+    FavouriteStationActionResponse,
+    FavouriteStationListResponse,
 )
 from app.services.discovery_service import DiscoveryService
 
@@ -559,6 +562,133 @@ def get_station_detail_by_path(
         user=current_user,
         latitude=latitude,
         longitude=longitude,
+    )
+
+
+@router.get(
+    "/stations/favourite-stations",
+    response_model=FavouriteStationListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List driver favourite stations (REQ-F2-14)",
+)
+def get_favourite_stations(
+    latitude: float | None = Query(None, description="Optional driver latitude for distance calculation"),
+    longitude: float | None = Query(None, description="Optional driver longitude for distance calculation"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    List favourite stations saved by the authenticated driver (`GET /api/v1/stations/favourite-stations`, REQ-F2-14).
+    """
+    return DiscoveryService.list_favourite_stations(
+        db=db,
+        user=current_user,
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+
+@router.post(
+    "/stations/favourite-stations",
+    response_model=FavouriteStationActionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Save a favourite station (REQ-F2-14)",
+)
+def save_favourite_station_endpoint(
+    payload: FavouriteStationRequest,
+    request: Request,
+    latitude: float | None = Query(None, description="Optional driver latitude for distance calculation"),
+    longitude: float | None = Query(None, description="Optional driver longitude for distance calculation"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Save an approved active station to the driver's favourites (REQ-F2-14).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.save_favourite_station(
+        db=db,
+        user=current_user,
+        station_id=payload.station_id,
+        latitude=latitude,
+        longitude=longitude,
+        ip_address=client_ip,
+    )
+
+
+@router.delete(
+    "/stations/favourite-stations",
+    response_model=FavouriteStationActionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Remove a favourite station (REQ-F2-14)",
+)
+def remove_favourite_station_query_endpoint(
+    request: Request,
+    station_id: int = Query(..., description="ID of the station to remove from favourites"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Remove a saved station from the driver's favourites by query param (REQ-F2-14).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.remove_favourite_station(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        ip_address=client_ip,
+    )
+
+
+@router.post(
+    "/stations/{station_id}/favourite",
+    response_model=FavouriteStationActionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Save a favourite station by path ID (REQ-F2-14)",
+)
+def save_favourite_station_by_path(
+    request: Request,
+    station_id: int = Path(..., description="ID of the station to save as favourite"),
+    latitude: float | None = Query(None, description="Optional driver latitude for distance calculation"),
+    longitude: float | None = Query(None, description="Optional driver longitude for distance calculation"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    RESTful alias to save a favourite station (`POST /api/v1/stations/{station_id}/favourite`, REQ-F2-14).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.save_favourite_station(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        latitude=latitude,
+        longitude=longitude,
+        ip_address=client_ip,
+    )
+
+
+@router.delete(
+    "/stations/{station_id}/favourite",
+    response_model=FavouriteStationActionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Remove a favourite station by path ID (REQ-F2-14)",
+)
+def remove_favourite_station_by_path(
+    request: Request,
+    station_id: int = Path(..., description="ID of the station to remove from favourites"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    RESTful alias to remove a favourite station (`DELETE /api/v1/stations/{station_id}/favourite`, REQ-F2-14).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.remove_favourite_station(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        ip_address=client_ip,
     )
 
 
