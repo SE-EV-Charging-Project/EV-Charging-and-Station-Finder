@@ -64,3 +64,4 @@ class Booking(Base):
 
     user = relationship("User", back_populates="bookings")
     vehicle = relationship("Vehicle", back_populates="bookings")
+    review = relationship("StationReview", back_populates="booking", uselist=False, cascade="all, delete-orphan")

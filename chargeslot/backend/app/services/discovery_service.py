@@ -15,6 +15,8 @@ from app.schemas.discovery import (
     StationDetailResponse,
     FavouriteStationActionResponse,
     FavouriteStationListResponse,
+    StationReviewCreateResponse,
+    StationReviewListResponse,
 )
 from app.discovery.search import (
     search_nearby_stations,
@@ -34,6 +36,10 @@ from app.discovery.favourites import (
     save_favourite_station,
     remove_favourite_station,
     list_favourite_stations,
+)
+from app.discovery.reviews import (
+    create_station_review,
+    list_station_reviews,
 )
 
 
@@ -355,5 +361,43 @@ class DiscoveryService:
             user=user,
             latitude=latitude,
             longitude=longitude,
+        )
+
+    @staticmethod
+    def create_station_review(
+        db: Session,
+        user: User,
+        booking_id: int,
+        rating: int,
+        comment: str | None = None,
+        station_id: int | None = None,
+        ip_address: str | None = None,
+    ) -> StationReviewCreateResponse:
+        """
+        Submit a 1-5 rating and optional review once per completed charging session (REQ-F2-15).
+        """
+        return create_station_review(
+            db=db,
+            user=user,
+            booking_id=booking_id,
+            rating=rating,
+            comment=comment,
+            station_id=station_id,
+            ip_address=ip_address,
+        )
+
+    @staticmethod
+    def list_station_reviews(
+        db: Session,
+        user: User,
+        station_id: int,
+    ) -> StationReviewListResponse:
+        """
+        List reviews and aggregated average rating for a station (REQ-F2-15).
+        """
+        return list_station_reviews(
+            db=db,
+            user=user,
+            station_id=station_id,
         )
 

@@ -71,3 +71,4 @@ class Station(Base):
     chargers = relationship("Charger", back_populates="station", cascade="all, delete-orphan")
     maintenance_windows = relationship("MaintenanceWindow", back_populates="station", cascade="all, delete-orphan")
     favourited_by = relationship("FavouriteStation", back_populates="station", cascade="all, delete-orphan")
+    reviews = relationship("StationReview", back_populates="station", cascade="all, delete-orphan")

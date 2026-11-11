@@ -479,5 +479,64 @@ class FavouriteStationListResponse(BaseModel):
     stations: list[FavouriteStationItem] = Field(default_factory=list)
 
 
+class StationReviewCreateRequest(BaseModel):
+    """
+    Request payload for rating (1-5) and reviewing a station after a completed session (REQ-F2-15).
+    """
+
+    booking_id: int = Field(..., gt=0, description="Completed charging session / booking ID")
+    rating: int = Field(..., ge=1, le=5, description="Station rating between 1 and 5")
+    station_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="Optional station ID verified against the completed booking",
+    )
+    comment: str | None = Field(
+        default=None,
+        max_length=1000,
+        description="Optional written review comment (max 1000 characters)",
+    )
+
+
+class StationReviewItem(BaseModel):
+    """
+    Single driver review item for a charging station (REQ-F2-15).
+    """
+
+    id: int
+    user_id: int
+    reviewer_name: str
+    station_id: int
+    booking_id: int
+    rating: int
+    comment: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StationReviewCreateResponse(BaseModel):
+    """
+    Response payload returned when submitting a station rating and review (REQ-F2-15).
+    """
+
+    message: str
+    review: StationReviewItem
+    average_rating: float | None = None
+    total_reviews: int
+
+
+class StationReviewListResponse(BaseModel):
+    """
+    List of reviews and aggregated rating summary for a charging station (REQ-F2-15).
+    """
+
+    station_id: int
+    average_rating: float | None = None
+    total_reviews: int
+    reviews: list[StationReviewItem] = Field(default_factory=list)
+
+
 
 
