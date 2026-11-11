@@ -57,6 +57,7 @@ class StationService:
             operating_hours=data.operating_hours,
             contact_phone=data.contact_phone,
             contact_email=data.contact_email,
+            price_per_kwh=data.price_per_kwh,
             status=StationStatus.PENDING,
             is_active=True,
         )
