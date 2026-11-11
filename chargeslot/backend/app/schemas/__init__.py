@@ -112,6 +112,13 @@ from app.schemas.discovery import (
     StationReviewItem,
     StationReviewCreateResponse,
     StationReviewListResponse,
+    FaultyChargerReportByPathRequest,
+    FaultyChargerReportCreateRequest,
+    FaultyChargerReportStatusUpdateRequest,
+    FaultForwardingSummary,
+    FaultyChargerReportItem,
+    FaultyChargerReportCreateResponse,
+    FaultyChargerReportListResponse,
 )
 
 __all__ = [
@@ -213,4 +220,11 @@ __all__ = [
     "StationReviewItem",
     "StationReviewCreateResponse",
     "StationReviewListResponse",
+    "FaultyChargerReportByPathRequest",
+    "FaultyChargerReportCreateRequest",
+    "FaultyChargerReportStatusUpdateRequest",
+    "FaultForwardingSummary",
+    "FaultyChargerReportItem",
+    "FaultyChargerReportCreateResponse",
+    "FaultyChargerReportListResponse",
 ]

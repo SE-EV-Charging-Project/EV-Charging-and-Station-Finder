@@ -10,6 +10,12 @@ from app.models.charger import Charger, Connector, CurrentType, ConnectorStatus
 from app.models.maintenance import MaintenanceWindow
 from app.models.favourite import FavouriteStation
 from app.models.review import StationReview
+from app.models.fault_report import (
+    FaultReportStatus,
+    FaultSeverity,
+    FaultType,
+    FaultyChargerReport,
+)
 
 __all__ = [
     "User",
@@ -34,4 +40,8 @@ __all__ = [
     "MaintenanceWindow",
     "FavouriteStation",
     "StationReview",
+    "FaultReportStatus",
+    "FaultSeverity",
+    "FaultType",
+    "FaultyChargerReport",
 ]

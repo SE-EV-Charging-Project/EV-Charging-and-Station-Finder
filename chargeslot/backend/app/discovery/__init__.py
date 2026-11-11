@@ -51,6 +51,16 @@ from app.discovery.reviews import (
     create_station_review,
     list_station_reviews,
 )
+from app.discovery.reports import (
+    MIN_FAULT_DESCRIPTION_LENGTH,
+    MAX_FAULT_DESCRIPTION_LENGTH,
+    validate_fault_report_input,
+    resolve_operator_forwarding_channels,
+    build_fault_report_item,
+    report_faulty_charger,
+    list_fault_reports,
+    update_fault_report_status,
+)
 
 __all__ = [
     "haversine_distance",
@@ -92,5 +102,13 @@ __all__ = [
     "build_review_item",
     "create_station_review",
     "list_station_reviews",
+    "MIN_FAULT_DESCRIPTION_LENGTH",
+    "MAX_FAULT_DESCRIPTION_LENGTH",
+    "validate_fault_report_input",
+    "resolve_operator_forwarding_channels",
+    "build_fault_report_item",
+    "report_faulty_charger",
+    "list_fault_reports",
+    "update_fault_report_status",
 ]
 
