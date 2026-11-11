@@ -12,12 +12,13 @@ from app.schemas.discovery import (
     StationTextSearchResponse,
     ClusteredMapViewResponse,
     PaginatedStationListResponse,
+    StationDetailResponse,
 )
 from app.discovery.search import (
     search_nearby_stations,
     DEFAULT_SEARCH_RADIUS_KM,
 )
-from app.discovery.views import get_station_markers
+from app.discovery.views import get_station_markers, get_station_detail
 from app.discovery.filters import apply_station_filters
 from app.discovery.sorting import search_and_sort_stations
 from app.discovery.text_search import search_stations_by_text
@@ -272,5 +273,25 @@ class DiscoveryService:
             has_next=has_next,
             has_prev=has_prev,
             items=items,
+        )
+
+    @staticmethod
+    def get_station_detail(
+        db: Session,
+        station_id: int,
+        user: User,
+        latitude: float | None = None,
+        longitude: float | None = None,
+    ) -> StationDetailResponse:
+        """
+        Return full station detail payload for REQ-F2-13 / SR-F2-03.
+        Enforces driver approval/active visibility (BR-01, BR-11) and operator scoping (REQ-F1-12).
+        """
+        return get_station_detail(
+            db=db,
+            station_id=station_id,
+            user=user,
+            latitude=latitude,
+            longitude=longitude,
         )
 

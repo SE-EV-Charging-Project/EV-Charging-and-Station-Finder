@@ -1,4 +1,5 @@
 import enum
+from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -339,6 +340,92 @@ class PaginatedStationListResponse(BaseModel):
     has_next: bool
     has_prev: bool
     items: list[NearbyStationItem]
+
+
+class StationOperatorSummary(BaseModel):
+    """
+    Summary of the station operator displayed on the station detail screen (REQ-F2-13).
+    """
+
+    id: int
+    name: str
+    organization: str | None = None
+    contact_phone: str | None = None
+    contact_email: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StationDetailConnectorItem(BaseModel):
+    """
+    Live connector detail item showing type, power, status, and last update timestamp (REQ-F2-13 / SR-F2-03).
+    """
+
+    id: int
+    charger_id: int
+    charger_name: str
+    connector_type: str
+    power_kw: float
+    current_type: str
+    status: str
+    last_update: datetime | None = None
+    is_out_of_service: bool = False
+    out_of_service_reason: str | None = None
+    expected_return_time: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StationDetailChargerItem(BaseModel):
+    """
+    Charger grouping for the station detail screen (REQ-F2-13 / BR-11).
+    """
+
+    id: int
+    name: str
+    power_kw: float
+    current_type: str
+    is_active: bool
+    is_out_of_service: bool = False
+    out_of_service_reason: str | None = None
+    expected_return_time: datetime | None = None
+    connectors: list[StationDetailConnectorItem] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StationDetailResponse(BaseModel):
+    """
+    Full station detail payload for REQ-F2-13 / SR-F2-03.
+    """
+
+    id: int
+    name: str
+    address: str
+    latitude: float
+    longitude: float
+    distance_km: float | None = None
+    operator: StationOperatorSummary
+    amenities: list[str] = Field(default_factory=list)
+    operating_hours: dict | str | None = None
+    contact_phone: str | None = None
+    contact_email: str | None = None
+    price_per_kwh: float | None = None
+    average_rating: float | None = None
+    total_reviews: int = 0
+    status: str
+    is_active: bool
+    availability_marker: StationAvailabilityMarker
+    total_connectors: int
+    available_connectors: int
+    connectors: list[StationDetailConnectorItem] = Field(default_factory=list)
+    chargers: list[StationDetailChargerItem] = Field(default_factory=list)
+    last_status_update: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
 
 
 

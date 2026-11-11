@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Path, Query, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -21,6 +21,7 @@ from app.schemas.discovery import (
     ClusteredMapViewRequest,
     ClusteredMapViewResponse,
     PaginatedStationListResponse,
+    StationDetailResponse,
 )
 from app.services.discovery_service import DiscoveryService
 
@@ -510,6 +511,54 @@ def get_paginated_stations_endpoint(
         radius_km=radius_km,
         sort_by=sort_by,
         sort_order=sort_order,
+    )
+
+
+@router.get(
+    "/stations/station-detail",
+    response_model=StationDetailResponse,
+    summary="Get full station detail (REQ-F2-13)",
+)
+def get_station_detail_query(
+    station_id: int = Query(..., description="ID of the station to inspect"),
+    latitude: float | None = Query(None, description="Optional user latitude for distance calculation"),
+    longitude: float | None = Query(None, description="Optional user longitude for distance calculation"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Station detail screen contract route (`GET /api/v1/stations/station-detail`) per REQ-F2-13 / SR-F2-03.
+    """
+    return DiscoveryService.get_station_detail(
+        db=db,
+        station_id=station_id,
+        user=current_user,
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+
+@router.get(
+    "/stations/{station_id}/detail",
+    response_model=StationDetailResponse,
+    summary="Get full station detail by path ID (REQ-F2-13)",
+)
+def get_station_detail_by_path(
+    station_id: int = Path(..., description="ID of the station to inspect"),
+    latitude: float | None = Query(None, description="Optional user latitude for distance calculation"),
+    longitude: float | None = Query(None, description="Optional user longitude for distance calculation"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    RESTful station detail alias (`GET /api/v1/stations/{station_id}/detail`) per REQ-F2-13 / SR-F2-03.
+    """
+    return DiscoveryService.get_station_detail(
+        db=db,
+        station_id=station_id,
+        user=current_user,
+        latitude=latitude,
+        longitude=longitude,
     )
 
 
