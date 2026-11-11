@@ -306,6 +306,20 @@ def ingest_status(
     db.refresh(connector)
     db.refresh(event)
 
+    from app.dashboard.realtime import publish_connector_status_change
+
+    publish_connector_status_change(
+        event_id=event.id,
+        station=station,
+        charger=charger,
+        connector=connector,
+        previous_status=previous_status,
+        new_status=mapped_status,
+        raw_status=event.raw_status,
+        observed_at=obs_utc,
+        error_code=cleaned_error_code,
+    )
+
     return ConnectorStatusIngestResponse(
         message="Connector status ingested successfully.",
         connector_id=connector.id,

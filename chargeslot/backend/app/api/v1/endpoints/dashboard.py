@@ -1,13 +1,15 @@
-from fastapi import APIRouter, Depends, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query, WebSocket, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.dashboard.realtime import station_status_websocket_handler
 from app.dashboard.views import get_live_connector_status_display
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.dashboard import LiveConnectorStatusDisplayResponse
 
 router = APIRouter(tags=["Live Status Dashboard"])
+ws_router = APIRouter(tags=["Live Status Dashboard WebSocket"])
 
 
 @router.get(
@@ -77,5 +79,40 @@ def display_single_connector_live_status(
         db=db,
         user=current_user,
         connector_id=connector_id,
+    )
+
+
+@ws_router.websocket("/ws/stations/status")
+async def stream_station_status_updates(
+    websocket: WebSocket,
+    station_id: int | None = Query(default=None, description="Subscribed station ID"),
+    token: str | None = Query(default=None, description="JWT access token"),
+    db: Session = Depends(get_db),
+) -> None:
+    """
+    Push live connector status changes over WebSocket to every open station
+    dashboard (REQ-F2-19 / CS19-045 / SW Architecture Page 6).
+    """
+    await station_status_websocket_handler(
+        websocket=websocket,
+        station_id=station_id,
+        db=db,
+        token=token,
+    )
+
+
+@ws_router.websocket("/ws/stations/{station_id}/status")
+async def stream_station_status_updates_by_path(
+    websocket: WebSocket,
+    station_id: int = Path(..., description="Subscribed station ID"),
+    token: str | None = Query(default=None, description="JWT access token"),
+    db: Session = Depends(get_db),
+) -> None:
+    """Path alias for live connector status push channel (REQ-F2-19)."""
+    await station_status_websocket_handler(
+        websocket=websocket,
+        station_id=station_id,
+        db=db,
+        token=token,
     )
 
