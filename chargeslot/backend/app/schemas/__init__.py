@@ -129,6 +129,8 @@ from app.schemas.gateway import (
 from app.schemas.dashboard import (
     ConnectorLiveStatusItem,
     LiveConnectorStatusDisplayResponse,
+    StaleConnectorStatusItem,
+    StaleStatusHandlingResponse,
 )
 
 __all__ = [
@@ -243,4 +245,6 @@ __all__ = [
     "ConnectorStatusHistoryResponse",
     "ConnectorLiveStatusItem",
     "LiveConnectorStatusDisplayResponse",
+    "StaleConnectorStatusItem",
+    "StaleStatusHandlingResponse",
 ]

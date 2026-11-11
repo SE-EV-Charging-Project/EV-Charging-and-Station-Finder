@@ -3,10 +3,17 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.dashboard.realtime import station_status_websocket_handler
+from app.dashboard.staleness import (
+    DEFAULT_STALE_THRESHOLD_SECONDS,
+    get_stale_connector_status_display,
+)
 from app.dashboard.views import get_live_connector_status_display
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.dashboard import LiveConnectorStatusDisplayResponse
+from app.schemas.dashboard import (
+    LiveConnectorStatusDisplayResponse,
+    StaleStatusHandlingResponse,
+)
 
 router = APIRouter(tags=["Live Status Dashboard"])
 ws_router = APIRouter(tags=["Live Status Dashboard WebSocket"])
@@ -30,6 +37,10 @@ def display_live_connector_status(
         alias="status",
         description="Optional status filter: Available, Occupied, Reserved, Faulted, Offline",
     ),
+    apply_stale_fallback: bool = Query(
+        default=False,
+        description="When true, replaces >120s stale statuses with 'Status unknown' (REQ-F2-20)",
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> LiveConnectorStatusDisplayResponse:
@@ -39,6 +50,42 @@ def display_live_connector_status(
         station_id=station_id,
         connector_id=connector_id,
         status_filter=status_filter,
+        apply_stale_fallback=apply_stale_fallback,
+    )
+
+
+@router.get(
+    "/stations/stale-status-handling",
+    response_model=StaleStatusHandlingResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display connector statuses with >120s 'Status unknown' fallback (SW Architecture Route)",
+    description=(
+        "Evaluates telemetry freshness for connectors at a station or specific connector and "
+        "displays 'Status unknown' whenever no update has been received for more than 120 seconds "
+        "(REQ-F2-20 / CS19-046)."
+    ),
+)
+def display_stale_connector_status(
+    station_id: int | None = Query(default=None, description="Target station ID"),
+    connector_id: int | None = Query(default=None, description="Optional specific connector ID"),
+    stale_threshold_seconds: int = Query(
+        default=DEFAULT_STALE_THRESHOLD_SECONDS,
+        description="Max telemetry age in seconds before reporting 'Status unknown' (default 120s)",
+    ),
+    stale_only: bool = Query(
+        default=False,
+        description="Filter returned list to stale connectors only",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StaleStatusHandlingResponse:
+    return get_stale_connector_status_display(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=connector_id,
+        stale_threshold_seconds=stale_threshold_seconds,
+        stale_only=stale_only,
     )
 
 
