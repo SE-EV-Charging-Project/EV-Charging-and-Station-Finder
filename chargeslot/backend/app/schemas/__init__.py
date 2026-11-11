@@ -120,6 +120,12 @@ from app.schemas.discovery import (
     FaultyChargerReportCreateResponse,
     FaultyChargerReportListResponse,
 )
+from app.schemas.gateway import (
+    GatewayStatusIngestRequest,
+    ConnectorStatusIngestResponse,
+    ConnectorStatusEventItem,
+    ConnectorStatusHistoryResponse,
+)
 
 __all__ = [
     "UserRegisterRequest",
@@ -227,4 +233,8 @@ __all__ = [
     "FaultyChargerReportItem",
     "FaultyChargerReportCreateResponse",
     "FaultyChargerReportListResponse",
+    "GatewayStatusIngestRequest",
+    "ConnectorStatusIngestResponse",
+    "ConnectorStatusEventItem",
+    "ConnectorStatusHistoryResponse",
 ]

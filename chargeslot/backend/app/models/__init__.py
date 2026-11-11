@@ -16,6 +16,7 @@ from app.models.fault_report import (
     FaultType,
     FaultyChargerReport,
 )
+from app.models.connector_status_event import ConnectorStatusEvent
 
 __all__ = [
     "User",
@@ -44,4 +45,5 @@ __all__ = [
     "FaultSeverity",
     "FaultType",
     "FaultyChargerReport",
+    "ConnectorStatusEvent",
 ]
