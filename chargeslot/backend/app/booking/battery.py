@@ -3,14 +3,19 @@ Battery Level Input and Range Calculations (REQ-F3-01 / CS19-055 / Appendix B.1,
 Handles entering and updating vehicle battery percentage, state-of-charge tracking, and driving range calculations.
 """
 
+import math
 from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.booking.validators import validate_battery_level_input
+from app.models.charger import Charger, CurrentType
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
-from app.schemas.booking import BatteryLevelResponse
+from app.schemas.booking import (
+    BatteryLevelResponse,
+    ChargingTimeEstimateResponse,
+)
 from app.services.audit_service import AuditService
 
 
@@ -65,6 +70,32 @@ def compute_energy_required(
     return round((delta_soc / 100.0 * battery_kwh) / efficiency, 2)
 
 
+def compute_charging_time_minutes(
+    energy_required_kwh: float,
+    effective_charging_power_kw: float,
+) -> float:
+    """Estimate charging duration from energy required and effective power."""
+    try:
+        energy_value = float(energy_required_kwh)
+        power_value = float(effective_charging_power_kw)
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Energy and effective charging power must be numeric.",
+        )
+    if not math.isfinite(energy_value) or energy_value < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Energy required must be a finite, non-negative value.",
+        )
+    if not math.isfinite(power_value) or power_value <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Effective charging power must be a finite value greater than zero.",
+        )
+    return round(energy_value / power_value * 60.0, 1)
+
+
 def get_target_vehicle(
     db: Session,
     user: User,
@@ -113,6 +144,65 @@ def get_target_vehicle(
         )
 
     return vehicle
+
+
+def estimate_charging_time(
+    db: Session,
+    user: User,
+    vehicle_id: int,
+    charger_id: int,
+    target_soc: int = 80,
+) -> ChargingTimeEstimateResponse:
+    """Estimate charge time using owned vehicle data and a charger's rated power."""
+    vehicle = get_target_vehicle(db=db, user=user, vehicle_id=vehicle_id)
+    if vehicle.current_soc is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Enter the vehicle's current battery level before requesting a charging-time estimate.",
+        )
+
+    _, validated_target = validate_battery_level_input(
+        battery_level=vehicle.current_soc,
+        target_soc=target_soc,
+    )
+    charger = db.query(Charger).filter(Charger.id == charger_id).first()
+    if charger is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Charger with ID {charger_id} not found.",
+        )
+
+    vehicle_power_kw = (
+        vehicle.max_ac_kw
+        if charger.current_type == CurrentType.AC
+        else vehicle.max_dc_kw
+    )
+    if vehicle_power_kw <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Vehicle does not support {charger.current_type.value} charging.",
+        )
+
+    effective_power_kw = min(float(charger.power_kw), float(vehicle_power_kw))
+    energy_required_kwh = compute_energy_required(
+        battery_kwh=vehicle.battery_kwh,
+        current_soc=vehicle.current_soc,
+        target_soc=validated_target,
+    )
+    charging_time_minutes = compute_charging_time_minutes(
+        energy_required_kwh=energy_required_kwh,
+        effective_charging_power_kw=effective_power_kw,
+    )
+    return ChargingTimeEstimateResponse(
+        vehicle_id=vehicle.id,
+        charger_id=charger.id,
+        current_soc=vehicle.current_soc,
+        target_soc=validated_target,
+        energy_required_kwh=energy_required_kwh,
+        effective_charging_power_kw=effective_power_kw,
+        estimated_charging_time_minutes=charging_time_minutes,
+        message="Charging time estimate calculated successfully.",
+    )
 
 
 def enter_battery_level(

@@ -2,9 +2,11 @@
 Booking Schemas (Feature 3: Battery-Aware Booking and Auto-Booking / CS19-055 / REQ-F3-01).
 """
 
+import math
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class BatteryLevelInputRequest(BaseModel):
@@ -38,26 +40,34 @@ class BatteryLevelInputRequest(BaseModel):
     def validate_battery_level(cls, v: Any) -> int:
         if v is None:
             raise ValueError("Current battery level cannot be null or omitted.")
+        if isinstance(v, bool):
+            raise ValueError("Battery level must be an integer between 0% and 100%.")
         try:
             numeric_val = float(v)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             raise ValueError(f"Battery level must be numeric, got: {v!r}.")
+        if not math.isfinite(numeric_val) or not numeric_val.is_integer():
+            raise ValueError("Battery level must be an integer between 0% and 100%.")
         if numeric_val < 0.0 or numeric_val > 100.0:
             raise ValueError(f"Battery level must be between 0% and 100%, got {numeric_val}%.")
-        return round(numeric_val)
+        return int(numeric_val)
 
     @field_validator("target_soc", mode="before")
     @classmethod
     def validate_target_soc(cls, v: Any) -> int | None:
         if v is None:
             return 80
+        if isinstance(v, bool):
+            raise ValueError("Target battery level must be an integer between 0% and 100%.")
         try:
             numeric_val = float(v)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             raise ValueError(f"Target battery level must be numeric, got: {v!r}.")
+        if not math.isfinite(numeric_val) or not numeric_val.is_integer():
+            raise ValueError("Target battery level must be an integer between 0% and 100%.")
         if numeric_val < 0.0 or numeric_val > 100.0:
             raise ValueError(f"Target battery level must be between 0% and 100%, got {numeric_val}%.")
-        return round(numeric_val)
+        return int(numeric_val)
 
 
 class BatteryLevelResponse(BaseModel):
@@ -90,3 +100,24 @@ class BatteryRulesResponse(BaseModel):
     """
     rules: dict[str, Any]
     status: str = "success"
+
+
+class ChargingTimeEstimateRequest(BaseModel):
+    """Request a charging-time estimate for an owned vehicle and a charger."""
+
+    vehicle_id: int = Field(..., gt=0)
+    charger_id: int = Field(..., gt=0)
+    target_soc: int = Field(default=80, ge=0, le=100)
+
+
+class ChargingTimeEstimateResponse(BaseModel):
+    """Estimated charge energy, effective power, and charging duration."""
+
+    vehicle_id: int
+    charger_id: int
+    current_soc: int
+    target_soc: int
+    energy_required_kwh: float
+    effective_charging_power_kw: float
+    estimated_charging_time_minutes: float
+    message: str

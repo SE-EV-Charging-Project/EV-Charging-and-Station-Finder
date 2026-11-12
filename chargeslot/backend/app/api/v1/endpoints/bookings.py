@@ -8,6 +8,8 @@ from app.schemas.booking import (
     BatteryLevelInputRequest,
     BatteryLevelResponse,
     BatteryRulesResponse,
+    ChargingTimeEstimateRequest,
+    ChargingTimeEstimateResponse,
 )
 from app.services.booking_service import BookingService
 
@@ -76,4 +78,25 @@ def get_battery_rules() -> BatteryRulesResponse:
     return BatteryRulesResponse(
         rules=BookingService.get_battery_rules(),
         status="success",
+    )
+
+
+@router.post(
+    "/charging-time-estimate",
+    response_model=ChargingTimeEstimateResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Estimate vehicle charging time",
+    description="Estimates charging time from the vehicle's current SoC, target SoC, battery capacity, and effective charger power (REQ-F3-07 / CS19-061).",
+)
+def post_charging_time_estimate(
+    payload: ChargingTimeEstimateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ChargingTimeEstimateResponse:
+    return BookingService.estimate_charging_time(
+        db=db,
+        user=current_user,
+        vehicle_id=payload.vehicle_id,
+        charger_id=payload.charger_id,
+        target_soc=payload.target_soc,
     )

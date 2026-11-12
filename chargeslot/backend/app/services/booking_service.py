@@ -12,10 +12,14 @@ from app.booking.battery import (
     compute_usable_range as domain_compute_usable_range,
     compute_estimated_range as domain_compute_estimated_range,
     compute_energy_required as domain_compute_energy_required,
+    estimate_charging_time as domain_estimate_charging_time,
 )
 from app.booking.validators import get_battery_rules as domain_get_battery_rules
 from app.models.user import User
-from app.schemas.booking import BatteryLevelResponse
+from app.schemas.booking import (
+    BatteryLevelResponse,
+    ChargingTimeEstimateResponse,
+)
 
 
 class BookingService:
@@ -95,5 +99,22 @@ class BookingService:
         return domain_compute_energy_required(
             battery_kwh=battery_kwh,
             current_soc=current_soc,
+            target_soc=target_soc,
+        )
+
+    @staticmethod
+    def estimate_charging_time(
+        db: Session,
+        user: User,
+        vehicle_id: int,
+        charger_id: int,
+        target_soc: int = 80,
+    ) -> ChargingTimeEstimateResponse:
+        """Estimate charging time for one of the driver's vehicles."""
+        return domain_estimate_charging_time(
+            db=db,
+            user=user,
+            vehicle_id=vehicle_id,
+            charger_id=charger_id,
             target_soc=target_soc,
         )

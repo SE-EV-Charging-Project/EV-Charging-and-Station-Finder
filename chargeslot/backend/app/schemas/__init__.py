@@ -74,6 +74,8 @@ from app.schemas.booking import (
     BatteryLevelInputRequest,
     BatteryLevelResponse,
     BatteryRulesResponse,
+    ChargingTimeEstimateRequest,
+    ChargingTimeEstimateResponse,
 )
 
 from app.schemas.maintenance import (
@@ -203,6 +205,8 @@ __all__ = [
     "BatteryLevelInputRequest",
     "BatteryLevelResponse",
     "BatteryRulesResponse",
+    "ChargingTimeEstimateRequest",
+    "ChargingTimeEstimateResponse",
     "MaintenanceWindowCreateRequest",
     "MaintenanceWindowUpdateRequest",
     "MaintenanceWindowResponse",
