@@ -2,6 +2,8 @@ import enum
 from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
 
+from app.models.fault_report import FaultReportStatus, FaultSeverity, FaultType
+
 
 class MarkerColor(str, enum.Enum):
     """
@@ -536,6 +538,112 @@ class StationReviewListResponse(BaseModel):
     average_rating: float | None = None
     total_reviews: int
     reviews: list[StationReviewItem] = Field(default_factory=list)
+
+
+class _FaultyChargerReportFields(BaseModel):
+    """Shared fault report payload fields for REQ-F2-16."""
+
+    description: str = Field(
+        ...,
+        min_length=5,
+        max_length=1000,
+        description="Description of the charger fault (5-1000 characters)",
+    )
+    station_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="Optional station ID verified against the reported charger",
+    )
+    connector_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="Optional affected connector ID on the charger",
+    )
+    fault_type: FaultType = Field(
+        default=FaultType.HARDWARE_FAULT,
+        description="Category of charger fault",
+    )
+    severity: FaultSeverity = Field(
+        default=FaultSeverity.MEDIUM,
+        description="Severity of the fault (low, medium, high, critical)",
+    )
+
+
+class FaultyChargerReportByPathRequest(_FaultyChargerReportFields):
+    """Request body when charger_id is supplied in the URL path (REQ-F2-16)."""
+
+    pass
+
+
+class FaultyChargerReportCreateRequest(_FaultyChargerReportFields):
+    """Request payload for reporting a faulty charger via /report-faulty-charger (REQ-F2-16)."""
+
+    charger_id: int = Field(..., gt=0, description="ID of the faulty charger")
+
+
+class FaultyChargerReportStatusUpdateRequest(BaseModel):
+    """Operator status update request for a forwarded fault report (REQ-F2-16)."""
+
+    status: FaultReportStatus = Field(
+        ...,
+        description="New workflow status (acknowledged or resolved)",
+    )
+    operator_notes: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Optional operator triage or resolution notes",
+    )
+
+
+class FaultForwardingSummary(BaseModel):
+    """Details confirming delivery/forwarding of a fault report to the station operator (REQ-F2-16)."""
+
+    operator_id: int
+    operator_name: str
+    organization: str | None = None
+    forwarded_to_email: str | None = None
+    forwarded_to_phone: str | None = None
+    channels: list[str] = Field(default_factory=list)
+    forwarded_at: datetime
+
+
+class FaultyChargerReportItem(BaseModel):
+    """Faulty charger report DTO returned to reporters and station operators (REQ-F2-16)."""
+
+    id: int
+    reporter_user_id: int
+    reporter_name: str
+    operator_id: int
+    station_id: int
+    station_name: str
+    charger_id: int
+    charger_name: str
+    connector_id: int | None = None
+    fault_type: str
+    severity: str
+    description: str
+    status: str
+    forwarding: FaultForwardingSummary
+    operator_notes: str | None = None
+    resolved_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FaultyChargerReportCreateResponse(BaseModel):
+    """Confirmation payload returned when a faulty charger report is submitted and forwarded (REQ-F2-16)."""
+
+    message: str
+    report: FaultyChargerReportItem
+
+
+class FaultyChargerReportListResponse(BaseModel):
+    """List of faulty charger reports scoped to the caller's role (REQ-F2-16)."""
+
+    total: int
+    reports: list[FaultyChargerReportItem] = Field(default_factory=list)
 
 
 

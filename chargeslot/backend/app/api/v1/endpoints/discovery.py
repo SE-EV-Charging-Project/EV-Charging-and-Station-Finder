@@ -28,6 +28,12 @@ from app.schemas.discovery import (
     StationReviewCreateRequest,
     StationReviewCreateResponse,
     StationReviewListResponse,
+    FaultyChargerReportByPathRequest,
+    FaultyChargerReportCreateRequest,
+    FaultyChargerReportStatusUpdateRequest,
+    FaultyChargerReportItem,
+    FaultyChargerReportCreateResponse,
+    FaultyChargerReportListResponse,
 )
 from app.services.discovery_service import DiscoveryService
 
@@ -790,6 +796,136 @@ def list_station_reviews_by_path(
         db=db,
         user=current_user,
         station_id=station_id,
+    )
+
+
+@router.post(
+    "/stations/report-faulty-charger",
+    response_model=FaultyChargerReportCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Report a faulty charger (SW Architecture Route, REQ-F2-16)",
+)
+def report_faulty_charger_endpoint(
+    payload: FaultyChargerReportCreateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Submit a faulty charger report as a driver and forward it to the station's operator
+    (`POST /api/v1/stations/report-faulty-charger`, REQ-F2-16).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.report_faulty_charger(
+        db=db,
+        user=current_user,
+        charger_id=payload.charger_id,
+        description=payload.description,
+        station_id=payload.station_id,
+        connector_id=payload.connector_id,
+        fault_type=payload.fault_type,
+        severity=payload.severity,
+        ip_address=client_ip,
+    )
+
+
+@router.get(
+    "/stations/report-faulty-charger",
+    response_model=FaultyChargerReportListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List faulty charger reports scoped to caller role (REQ-F2-16)",
+)
+def list_faulty_charger_reports_endpoint(
+    station_id: int | None = Query(None, description="Optional station ID filter"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    List faulty charger reports (`GET /api/v1/stations/report-faulty-charger`, REQ-F2-16).
+    Drivers see only their own reports; operators see reports forwarded to their stations.
+    """
+    return DiscoveryService.list_fault_reports(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+    )
+
+
+@router.post(
+    "/stations/chargers/{charger_id}/report-fault",
+    response_model=FaultyChargerReportCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Report a faulty charger by path ID (REQ-F2-16)",
+)
+def report_faulty_charger_by_path(
+    payload: FaultyChargerReportByPathRequest,
+    request: Request,
+    charger_id: int = Path(..., description="ID of the faulty charger"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    RESTful alias to submit a faulty charger report (`POST /api/v1/stations/chargers/{charger_id}/report-fault`).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.report_faulty_charger(
+        db=db,
+        user=current_user,
+        charger_id=charger_id,
+        description=payload.description,
+        station_id=payload.station_id,
+        connector_id=payload.connector_id,
+        fault_type=payload.fault_type,
+        severity=payload.severity,
+        ip_address=client_ip,
+    )
+
+
+@router.get(
+    "/stations/{station_id}/fault-reports",
+    response_model=FaultyChargerReportListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List faulty charger reports for a station (REQ-F2-16)",
+)
+def list_station_fault_reports_by_path(
+    station_id: int = Path(..., description="ID of the station"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Station-scoped faulty charger reports for owning operators, admins, or the reporting driver.
+    """
+    return DiscoveryService.list_fault_reports(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+    )
+
+
+@router.patch(
+    "/stations/fault-reports/{report_id}/status",
+    response_model=FaultyChargerReportItem,
+    status_code=status.HTTP_200_OK,
+    summary="Update forwarded fault report status as operator (REQ-F2-16)",
+)
+def update_fault_report_status_endpoint(
+    payload: FaultyChargerReportStatusUpdateRequest,
+    request: Request,
+    report_id: int = Path(..., description="ID of the fault report"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Allow owning station operator (or Admin) to acknowledge or resolve a forwarded fault report.
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.update_fault_report_status(
+        db=db,
+        user=current_user,
+        report_id=report_id,
+        new_status=payload.status,
+        operator_notes=payload.operator_notes,
+        ip_address=client_ip,
     )
 
 

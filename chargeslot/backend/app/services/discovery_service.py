@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from app.models.fault_report import FaultReportStatus, FaultSeverity, FaultType
 from app.models.user import User
 from app.schemas.discovery import (
     NearbyStationSearchResponse,
@@ -17,6 +18,9 @@ from app.schemas.discovery import (
     FavouriteStationListResponse,
     StationReviewCreateResponse,
     StationReviewListResponse,
+    FaultyChargerReportCreateResponse,
+    FaultyChargerReportItem,
+    FaultyChargerReportListResponse,
 )
 from app.discovery.search import (
     search_nearby_stations,
@@ -40,6 +44,11 @@ from app.discovery.favourites import (
 from app.discovery.reviews import (
     create_station_review,
     list_station_reviews,
+)
+from app.discovery.reports import (
+    report_faulty_charger,
+    list_fault_reports,
+    update_fault_report_status,
 )
 
 
@@ -399,5 +408,68 @@ class DiscoveryService:
             db=db,
             user=user,
             station_id=station_id,
+        )
+
+    @staticmethod
+    def report_faulty_charger(
+        db: Session,
+        user: User,
+        charger_id: int,
+        description: str,
+        station_id: int | None = None,
+        connector_id: int | None = None,
+        fault_type: FaultType | str = FaultType.HARDWARE_FAULT,
+        severity: FaultSeverity | str = FaultSeverity.MEDIUM,
+        ip_address: str | None = None,
+    ) -> FaultyChargerReportCreateResponse:
+        """
+        Submit a faulty charger report and forward it to the station's operator (REQ-F2-16).
+        """
+        return report_faulty_charger(
+            db=db,
+            user=user,
+            charger_id=charger_id,
+            description=description,
+            station_id=station_id,
+            connector_id=connector_id,
+            fault_type=fault_type,
+            severity=severity,
+            ip_address=ip_address,
+        )
+
+    @staticmethod
+    def list_fault_reports(
+        db: Session,
+        user: User,
+        station_id: int | None = None,
+    ) -> FaultyChargerReportListResponse:
+        """
+        List faulty charger reports scoped to driver reporter or owning station operator (REQ-F2-16).
+        """
+        return list_fault_reports(
+            db=db,
+            user=user,
+            station_id=station_id,
+        )
+
+    @staticmethod
+    def update_fault_report_status(
+        db: Session,
+        user: User,
+        report_id: int,
+        new_status: FaultReportStatus,
+        operator_notes: str | None = None,
+        ip_address: str | None = None,
+    ) -> FaultyChargerReportItem:
+        """
+        Update workflow status on a forwarded fault report as owning operator or admin (REQ-F2-16).
+        """
+        return update_fault_report_status(
+            db=db,
+            user=user,
+            report_id=report_id,
+            new_status=new_status,
+            operator_notes=operator_notes,
+            ip_address=ip_address,
         )
 
