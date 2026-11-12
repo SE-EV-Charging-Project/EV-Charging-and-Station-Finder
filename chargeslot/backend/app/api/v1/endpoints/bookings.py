@@ -8,6 +8,8 @@ from app.schemas.booking import (
     BatteryLevelInputRequest,
     BatteryLevelResponse,
     BatteryRulesResponse,
+    ChargingCostEstimateRequest,
+    ChargingCostEstimateResponse,
     ChargingTimeEstimateRequest,
     ChargingTimeEstimateResponse,
 )
@@ -98,5 +100,26 @@ def post_charging_time_estimate(
         user=current_user,
         vehicle_id=payload.vehicle_id,
         charger_id=payload.charger_id,
+        target_soc=payload.target_soc,
+    )
+
+
+@router.post(
+    "/cost-estimate",
+    response_model=ChargingCostEstimateResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Estimate vehicle charging cost",
+    description="Estimates charging cost using the vehicle's current SoC, target SoC, battery capacity, and station tariff (REQ-F3-09 / CS19-063).",
+)
+def post_charging_cost_estimate(
+    payload: ChargingCostEstimateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ChargingCostEstimateResponse:
+    return BookingService.estimate_charging_cost(
+        db=db,
+        user=current_user,
+        vehicle_id=payload.vehicle_id,
+        station_id=payload.station_id,
         target_soc=payload.target_soc,
     )

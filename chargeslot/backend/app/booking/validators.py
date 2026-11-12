@@ -41,6 +41,16 @@ APPENDIX_B_BATTERY_RULES = {
         "unit": "minutes",
         "description": "Estimated time based on vehicle and charger power limits (REQ-F3-07).",
     },
+    "slot_length": {
+        "formula": "ceil(estimated_charging_time_minutes / 15) * 15",
+        "unit": "minutes",
+        "description": "Charging slot duration rounded up to a 15-minute boundary (REQ-F3-08).",
+    },
+    "charging_cost": {
+        "formula": "energy_required_kwh * station_price_per_kwh",
+        "unit": "INR",
+        "description": "Estimated charging cost at the station's configured tariff (REQ-F3-09).",
+    },
 }
 
 
