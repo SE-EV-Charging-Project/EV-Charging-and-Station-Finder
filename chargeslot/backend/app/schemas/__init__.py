@@ -126,6 +126,10 @@ from app.schemas.gateway import (
     ConnectorStatusEventItem,
     ConnectorStatusHistoryResponse,
 )
+from app.schemas.dashboard import (
+    ConnectorLiveStatusItem,
+    LiveConnectorStatusDisplayResponse,
+)
 
 __all__ = [
     "UserRegisterRequest",
@@ -237,4 +241,6 @@ __all__ = [
     "ConnectorStatusIngestResponse",
     "ConnectorStatusEventItem",
     "ConnectorStatusHistoryResponse",
+    "ConnectorLiveStatusItem",
+    "LiveConnectorStatusDisplayResponse",
 ]
