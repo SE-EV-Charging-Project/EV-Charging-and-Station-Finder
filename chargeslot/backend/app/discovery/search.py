@@ -126,6 +126,25 @@ def search_nearby_stations(
                 max([c.power_kw for c in active_chargers]) if active_chargers else None
             )
 
+            tot = len(all_connectors)
+            av = len(avail_connectors)
+            if tot == 0:
+                c_code = "grey"
+                s_label = "Offline"
+                b_text = "0/0 Offline"
+            elif av == tot:
+                c_code = "green"
+                s_label = "Available"
+                b_text = f"{av}/{tot} Available"
+            elif av > 0:
+                c_code = "amber"
+                s_label = "Partially Available"
+                b_text = f"{av}/{tot} Available"
+            else:
+                c_code = "red"
+                s_label = "Occupied"
+                b_text = f"0/{tot} Occupied"
+
             item = NearbyStationItem(
                 id=station.id,
                 name=station.name,
@@ -140,10 +159,13 @@ def search_nearby_stations(
                 status=station.status.value,
                 is_active=station.is_active,
                 total_chargers=len(active_chargers),
-                total_connectors=len(all_connectors),
-                available_connectors=len(avail_connectors),
+                total_connectors=tot,
+                available_connectors=av,
                 connector_types=connector_types,
                 max_power_kw=max_power,
+                color_code=c_code,
+                status_label=s_label,
+                badge_text=b_text,
             )
             results.append(item)
 
