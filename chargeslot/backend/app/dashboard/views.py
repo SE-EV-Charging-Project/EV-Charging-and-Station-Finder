@@ -173,6 +173,7 @@ def get_live_connector_status_display(
     station_id: int | None = None,
     connector_id: int | None = None,
     status_filter: str | None = None,
+    apply_stale_fallback: bool = False,
 ) -> LiveConnectorStatusDisplayResponse:
     """
     Build the live connector status and last update display response for a station
@@ -203,16 +204,35 @@ def get_live_connector_status_display(
 
     now_utc = datetime.now(timezone.utc)
     counts = {s.value: 0 for s in ConnectorStatus}
+    unknown_count = 0
     last_status_update: datetime | None = None
     all_items: list[ConnectorLiveStatusItem] = []
 
+    if apply_stale_fallback:
+        from app.dashboard.staleness import (
+            STATUS_UNKNOWN,
+            resolve_display_status_with_staleness,
+        )
+
     for charger, conn in visible_pairs:
         is_oos = bool(charger.is_out_of_service)
-        effective_status = (
-            ConnectorStatus.OFFLINE.value if is_oos else _enum_to_str(conn.status)
-        )
         last_update_utc = _ensure_utc(conn.last_update)
-        seconds_since = max(0, int((now_utc - last_update_utc).total_seconds()))
+
+        if apply_stale_fallback:
+            effective_status, is_stale, seconds_since, _ = resolve_display_status_with_staleness(
+                conn.status,
+                last_update_utc,
+                is_out_of_service=is_oos,
+                now_utc=now_utc,
+            )
+            if effective_status == STATUS_UNKNOWN:
+                unknown_count += 1
+        else:
+            effective_status = (
+                ConnectorStatus.OFFLINE.value if is_oos else _enum_to_str(conn.status)
+            )
+            is_stale = False
+            seconds_since = max(0, int((now_utc - last_update_utc).total_seconds()))
 
         counts[effective_status] = counts.get(effective_status, 0) + 1
         if last_status_update is None or last_update_utc > last_status_update:
@@ -236,6 +256,7 @@ def get_live_connector_status_display(
                 power_kw=float(charger.power_kw),
                 current_type=_enum_to_str(charger.current_type),
                 status=effective_status,
+                is_stale=is_stale,
                 last_update=last_update_utc,
                 seconds_since_update=seconds_since,
                 is_active=bool(charger.is_active),
@@ -266,6 +287,7 @@ def get_live_connector_status_display(
         reserved_connectors=counts[ConnectorStatus.RESERVED.value],
         faulted_connectors=counts[ConnectorStatus.FAULTED.value],
         offline_connectors=counts[ConnectorStatus.OFFLINE.value],
+        unknown_connectors=unknown_count,
         last_status_update=last_status_update,
         retrieved_at=now_utc,
         connectors=displayed_items,
