@@ -94,6 +94,8 @@ from app.schemas.discovery import (
     SortOrder,
     StationSortRequest,
     StationSortResponse,
+    StationTextSearchRequest,
+    StationTextSearchResponse,
 )
 
 __all__ = [
@@ -177,4 +179,6 @@ __all__ = [
     "SortOrder",
     "StationSortRequest",
     "StationSortResponse",
+    "StationTextSearchRequest",
+    "StationTextSearchResponse",
 ]

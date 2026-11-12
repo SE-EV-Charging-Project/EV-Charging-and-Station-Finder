@@ -39,6 +39,8 @@ from app.schemas.discovery import (
     StationFilterResponse,
     StationSortRequest,
     StationSortResponse,
+    StationTextSearchRequest,
+    StationTextSearchResponse,
 )
 from app.services.station_service import StationService
 from app.services.charger_service import ChargerService
@@ -672,6 +674,78 @@ def post_station_sort_stations(
         longitude=payload.longitude,
         radius_km=payload.radius_km,
         station_ids=payload.station_ids,
+        limit=payload.limit,
+        offset=payload.offset,
+    )
+
+
+# =========================================================================
+# Station Free-Text Search Endpoints (REQ-F2-11 / CS19-037 / Architecture Doc Page 6)
+# =========================================================================
+
+@router.get(
+    "/text-search",
+    response_model=StationTextSearchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Search stations by text (SW Architecture Route)",
+    description=(
+        "Searches charging stations by name, address, or geographic area (REQ-F2-11 / CS19-037). "
+        "Case-insensitive matching with relevance ranking and visibility gating."
+    ),
+)
+def get_station_text_search(
+    q: str = Query(
+        ...,
+        alias="query",
+        min_length=1,
+        max_length=100,
+        description="Search term matching station name, address, or area",
+    ),
+    latitude: float | None = Query(default=None, ge=-90.0, le=90.0, description="Driver latitude"),
+    longitude: float | None = Query(default=None, ge=-180.0, le=180.0, description="Driver longitude"),
+    radius_km: float | None = Query(default=None, ge=1.0, le=50.0, description="Search radius in km"),
+    sort_by: str | None = Query(default=None, description="Optional sort criteria: distance, price, power, availability"),
+    sort_order: str | None = Query(default=None, description="Optional sort order: asc, desc"),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationTextSearchResponse:
+    return DiscoveryService.text_search_stations(
+        db=db,
+        query=q,
+        user=current_user,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/text-search",
+    response_model=StationTextSearchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Search stations by text with JSON payload",
+    description="POST alternative to search stations by text query in request body (REQ-F2-11).",
+)
+def post_station_text_search(
+    payload: StationTextSearchRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationTextSearchResponse:
+    return DiscoveryService.text_search_stations(
+        db=db,
+        query=payload.query,
+        user=current_user,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        radius_km=payload.radius_km,
+        sort_by=payload.sort_by,
+        sort_order=payload.sort_order,
         limit=payload.limit,
         offset=payload.offset,
     )
