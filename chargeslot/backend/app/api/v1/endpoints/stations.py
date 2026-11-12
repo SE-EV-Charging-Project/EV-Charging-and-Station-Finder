@@ -41,6 +41,9 @@ from app.schemas.discovery import (
     StationSortResponse,
     StationTextSearchRequest,
     StationTextSearchResponse,
+    ClusteredMapViewRequest,
+    ClusteredMapViewResponse,
+    PaginatedStationListResponse,
 )
 from app.services.station_service import StationService
 from app.services.charger_service import ChargerService
@@ -748,6 +751,94 @@ def post_station_text_search(
         sort_order=payload.sort_order,
         limit=payload.limit,
         offset=payload.offset,
+    )
+
+
+# =========================================================================
+# Map Marker Clustering and Pagination Endpoints (REQ-F2-12 / CS19-038)
+# =========================================================================
+
+@router.get(
+    "/map-view",
+    response_model=ClusteredMapViewResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get stations for map view with clustering (SW Architecture Route)",
+    description=(
+        "Retrieves stations for map display. Automatically clusters markers when >50 stations "
+        "are in view per REQ-F2-12 / CS19-038."
+    ),
+)
+def get_station_clustered_map_view(
+    latitude: float | None = Query(default=None, ge=-90.0, le=90.0, description="Center latitude"),
+    longitude: float | None = Query(default=None, ge=-180.0, le=180.0, description="Center longitude"),
+    radius_km: float = Query(default=50.0, ge=1.0, le=50.0, description="Search radius in km"),
+    threshold: int = Query(default=50, ge=1, le=100, description="Clustering threshold (default: 50 per REQ-F2-12)"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ClusteredMapViewResponse:
+    return DiscoveryService.get_map_view(
+        db=db,
+        user=current_user,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        threshold=threshold,
+    )
+
+
+@router.post(
+    "/map-view",
+    response_model=ClusteredMapViewResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get stations for map view with clustering via JSON payload",
+    description="POST alternative to query clustered map view (REQ-F2-12).",
+)
+def post_station_clustered_map_view(
+    payload: ClusteredMapViewRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ClusteredMapViewResponse:
+    return DiscoveryService.get_map_view(
+        db=db,
+        user=current_user,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        radius_km=payload.radius_km,
+        threshold=payload.threshold,
+    )
+
+
+@router.get(
+    "/paginated-search",
+    response_model=PaginatedStationListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get paginated list of stations (20/page default)",
+    description=(
+        "Retrieves paginated charging station list results defaulting to 20/page (REQ-F2-12 / CS19-038). "
+        "Provides total_pages, has_next, and has_prev navigation indicators."
+    ),
+)
+def get_station_paginated_search(
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed, default 1)"),
+    page_size: int = Query(default=20, ge=1, le=100, description="Page size (default 20/page per REQ-F2-12)"),
+    latitude: float | None = Query(default=None, ge=-90.0, le=90.0, description="Driver latitude"),
+    longitude: float | None = Query(default=None, ge=-180.0, le=180.0, description="Driver longitude"),
+    radius_km: float = Query(default=50.0, ge=1.0, le=50.0, description="Search radius in km"),
+    sort_by: str | None = Query(default=None, description="Sort criteria: distance, price, power, availability"),
+    sort_order: str | None = Query(default=None, description="Sort order: asc, desc"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PaginatedStationListResponse:
+    return DiscoveryService.get_paginated_stations(
+        db=db,
+        user=current_user,
+        page=page,
+        page_size=page_size,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
 

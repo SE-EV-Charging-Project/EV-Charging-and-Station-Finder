@@ -25,6 +25,14 @@ from app.discovery.text_search import (
     search_stations_by_text,
     validate_text_search_query,
 )
+from app.discovery.clustering import (
+    paginate_items,
+    validate_pagination_params,
+    cluster_stations,
+    get_clustered_map_view,
+    DEFAULT_PAGE_SIZE,
+    CLUSTERING_THRESHOLD,
+)
 
 __all__ = [
     "haversine_distance",
@@ -46,5 +54,11 @@ __all__ = [
     "DEFAULT_SORT_ORDERS",
     "search_stations_by_text",
     "validate_text_search_query",
+    "paginate_items",
+    "validate_pagination_params",
+    "cluster_stations",
+    "get_clustered_map_view",
+    "DEFAULT_PAGE_SIZE",
+    "CLUSTERING_THRESHOLD",
 ]
 
