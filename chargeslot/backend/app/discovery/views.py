@@ -358,6 +358,7 @@ def get_station_detail(
         .options(
             joinedload(Station.operator),
             joinedload(Station.chargers).joinedload(Charger.connectors),
+            joinedload(Station.reviews),
         )
         .filter(Station.id == station_id)
         .first()

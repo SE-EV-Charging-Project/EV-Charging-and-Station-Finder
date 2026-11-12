@@ -60,7 +60,10 @@ def validate_favourite_params(
 def _load_station_for_favourite(db: Session, station_id: int) -> Station | None:
     return (
         db.query(Station)
-        .options(joinedload(Station.chargers).joinedload(Charger.connectors))
+        .options(
+            joinedload(Station.chargers).joinedload(Charger.connectors),
+            joinedload(Station.reviews),
+        )
         .filter(Station.id == station_id)
         .first()
     )
@@ -229,7 +232,8 @@ def list_favourite_stations(
         .options(
             joinedload(FavouriteStation.station)
             .joinedload(Station.chargers)
-            .joinedload(Charger.connectors)
+            .joinedload(Charger.connectors),
+            joinedload(FavouriteStation.station).joinedload(Station.reviews),
         )
         .filter(FavouriteStation.user_id == user.id)
         .order_by(FavouriteStation.created_at.desc(), FavouriteStation.id.desc())

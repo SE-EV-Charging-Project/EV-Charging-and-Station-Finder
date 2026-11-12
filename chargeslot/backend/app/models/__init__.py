@@ -9,6 +9,7 @@ from app.models.station import Station, StationStatus
 from app.models.charger import Charger, Connector, CurrentType, ConnectorStatus
 from app.models.maintenance import MaintenanceWindow
 from app.models.favourite import FavouriteStation
+from app.models.review import StationReview
 
 __all__ = [
     "User",
@@ -32,4 +33,5 @@ __all__ = [
     "ConnectorStatus",
     "MaintenanceWindow",
     "FavouriteStation",
+    "StationReview",
 ]

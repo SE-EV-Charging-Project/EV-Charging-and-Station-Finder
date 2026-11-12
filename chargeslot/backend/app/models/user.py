@@ -75,3 +75,4 @@ class User(Base):
     bookings = relationship("Booking", back_populates="user", cascade="all, delete-orphan")
     stations = relationship("Station", foreign_keys="Station.operator_id", back_populates="operator", cascade="all, delete-orphan")
     favourite_stations = relationship("FavouriteStation", back_populates="user", cascade="all, delete-orphan")
+    station_reviews = relationship("StationReview", back_populates="user", cascade="all, delete-orphan")

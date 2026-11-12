@@ -25,6 +25,9 @@ from app.schemas.discovery import (
     FavouriteStationRequest,
     FavouriteStationActionResponse,
     FavouriteStationListResponse,
+    StationReviewCreateRequest,
+    StationReviewCreateResponse,
+    StationReviewListResponse,
 )
 from app.services.discovery_service import DiscoveryService
 
@@ -689,6 +692,104 @@ def remove_favourite_station_by_path(
         user=current_user,
         station_id=station_id,
         ip_address=client_ip,
+    )
+
+
+@router.post(
+    "/stations/rate-a-station",
+    response_model=StationReviewCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Rate and review a station (SW Architecture Route, REQ-F2-15)",
+)
+def rate_a_station(
+    payload: StationReviewCreateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Submit a rating (1-5) and optional review for a station once per completed session
+    (`POST /api/v1/stations/rate-a-station`, REQ-F2-15).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.create_station_review(
+        db=db,
+        user=current_user,
+        booking_id=payload.booking_id,
+        rating=payload.rating,
+        comment=payload.comment,
+        station_id=payload.station_id,
+        ip_address=client_ip,
+    )
+
+
+@router.get(
+    "/stations/rate-a-station",
+    response_model=StationReviewListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List reviews for a station (REQ-F2-15)",
+)
+def get_station_reviews_by_query(
+    station_id: int = Query(..., description="ID of the station to list reviews for"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    List station reviews and average rating summary (`GET /api/v1/stations/rate-a-station`, REQ-F2-15).
+    """
+    return DiscoveryService.list_station_reviews(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+    )
+
+
+@router.post(
+    "/stations/{station_id}/reviews",
+    response_model=StationReviewCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit a rating and review for a station by path ID (REQ-F2-15)",
+)
+def create_station_review_by_path(
+    payload: StationReviewCreateRequest,
+    request: Request,
+    station_id: int = Path(..., description="ID of the station being reviewed"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    RESTful alias to submit a station review (`POST /api/v1/stations/{station_id}/reviews`, REQ-F2-15).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.create_station_review(
+        db=db,
+        user=current_user,
+        booking_id=payload.booking_id,
+        rating=payload.rating,
+        comment=payload.comment,
+        station_id=station_id,
+        ip_address=client_ip,
+    )
+
+
+@router.get(
+    "/stations/{station_id}/reviews",
+    response_model=StationReviewListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List reviews for a station by path ID (REQ-F2-15)",
+)
+def list_station_reviews_by_path(
+    station_id: int = Path(..., description="ID of the station to list reviews for"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    RESTful alias to list station reviews and average rating (`GET /api/v1/stations/{station_id}/reviews`, REQ-F2-15).
+    """
+    return DiscoveryService.list_station_reviews(
+        db=db,
+        user=current_user,
+        station_id=station_id,
     )
 
 

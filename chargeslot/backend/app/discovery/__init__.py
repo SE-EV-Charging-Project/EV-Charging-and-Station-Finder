@@ -44,6 +44,13 @@ from app.discovery.favourites import (
     remove_favourite_station,
     list_favourite_stations,
 )
+from app.discovery.reviews import (
+    MAX_REVIEW_COMMENT_LENGTH,
+    validate_review_input,
+    build_review_item,
+    create_station_review,
+    list_station_reviews,
+)
 
 __all__ = [
     "haversine_distance",
@@ -80,5 +87,10 @@ __all__ = [
     "save_favourite_station",
     "remove_favourite_station",
     "list_favourite_stations",
+    "MAX_REVIEW_COMMENT_LENGTH",
+    "validate_review_input",
+    "build_review_item",
+    "create_station_review",
+    "list_station_reviews",
 ]
 
