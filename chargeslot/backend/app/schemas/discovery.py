@@ -128,3 +128,68 @@ class BatchAvailabilityMarkersRequest(BaseModel):
     station_ids: list[int] = Field(..., min_length=1, max_length=200, description="List of station IDs")
 
 
+class StationFilterRequest(BaseModel):
+    """
+    Payload for filtering stations by multiple criteria (REQ-F2-09 / CS19-035).
+    Filters by connector types, minimum power, availability now, max price,
+    amenities, and vehicle compatibility.
+    """
+    connector_types: list[str] | None = Field(
+        default=None,
+        description="Filter by connector types: CCS2, CHAdeMO, Type 2, GB/T",
+    )
+    min_power_kw: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=500.0,
+        description="Minimum charger power rating in kW",
+    )
+    available_now: bool | None = Field(
+        default=None,
+        description="Only return stations with at least one currently available connector",
+    )
+    max_price_kwh: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Maximum tariff price per kWh in INR",
+    )
+    amenities: list[str] | None = Field(
+        default=None,
+        description="Required amenities (e.g. WiFi, Restroom, Cafe)",
+    )
+    vehicle_id: int | None = Field(
+        default=None,
+        description="Selected vehicle ID for compatibility filtering",
+    )
+    latitude: float | None = Field(
+        default=None,
+        ge=-90.0,
+        le=90.0,
+        description="Optional driver latitude for proximity filtering",
+    )
+    longitude: float | None = Field(
+        default=None,
+        ge=-180.0,
+        le=180.0,
+        description="Optional driver longitude for proximity filtering",
+    )
+    radius_km: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=50.0,
+        description="Search radius in kilometers [1.0, 50.0]",
+    )
+    limit: int = Field(default=50, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+
+
+class StationFilterResponse(BaseModel):
+    """
+    Response model for filtered station results (REQ-F2-09).
+    """
+    total: int
+    applied_filters: dict = Field(default_factory=dict)
+    stations: list[NearbyStationItem]
+
+
+

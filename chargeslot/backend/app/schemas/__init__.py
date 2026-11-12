@@ -88,6 +88,8 @@ from app.schemas.discovery import (
     StationAvailabilityMarker,
     StationAvailabilityMarkersResponse,
     BatchAvailabilityMarkersRequest,
+    StationFilterRequest,
+    StationFilterResponse,
 )
 
 __all__ = [
@@ -165,4 +167,6 @@ __all__ = [
     "StationAvailabilityMarker",
     "StationAvailabilityMarkersResponse",
     "BatchAvailabilityMarkersRequest",
+    "StationFilterRequest",
+    "StationFilterResponse",
 ]

@@ -10,6 +10,8 @@ from app.schemas.discovery import (
     StationAvailabilityMarker,
     StationAvailabilityMarkersResponse,
     BatchAvailabilityMarkersRequest,
+    StationFilterRequest,
+    StationFilterResponse,
 )
 from app.services.discovery_service import DiscoveryService
 
@@ -174,5 +176,81 @@ def get_single_station_availability_marker(
             detail=f"Station with ID {station_id} not found or not active.",
         )
     return response.markers[0]
+
+
+# =========================================================================
+# Station Filtering Endpoints (REQ-F2-09 / CS19-035 / Architecture Doc Page 6)
+# =========================================================================
+
+@router.get(
+    "/stations/filter-stations",
+    response_model=StationFilterResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Filter stations (SW Architecture Route)",
+    description=(
+        "Filters stations by connector type, minimum power, availability now, "
+        "maximum price per kWh, amenities, and vehicle compatibility (REQ-F2-09 / CS19-035)."
+    ),
+)
+def get_filter_stations(
+    connector_types: list[str] | None = Query(default=None, description="Connector types: CCS2, CHAdeMO, Type 2, GB/T"),
+    min_power_kw: float | None = Query(default=None, ge=0.0, le=500.0, description="Minimum power in kW"),
+    available_now: bool | None = Query(default=None, description="Only stations with Available connectors"),
+    max_price_kwh: float | None = Query(default=None, ge=0.0, description="Max price per kWh"),
+    amenities: list[str] | None = Query(default=None, description="Required amenities e.g. WiFi, Cafe"),
+    vehicle_id: int | None = Query(default=None, description="Vehicle ID for compatibility filtering"),
+    latitude: float | None = Query(default=None, ge=-90.0, le=90.0, description="Center latitude"),
+    longitude: float | None = Query(default=None, ge=-180.0, le=180.0, description="Center longitude"),
+    radius_km: float = Query(default=10.0, ge=1.0, le=50.0, description="Radius in km [1.0, 50.0]"),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationFilterResponse:
+    return DiscoveryService.filter_stations(
+        db=db,
+        user=current_user,
+        connector_types=connector_types,
+        min_power_kw=min_power_kw,
+        available_now=available_now,
+        max_price_kwh=max_price_kwh,
+        amenities=amenities,
+        vehicle_id=vehicle_id,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/stations/filter-stations",
+    response_model=StationFilterResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Filter stations with JSON payload",
+    description="POST alternative to filter stations using request body (REQ-F2-09).",
+)
+def post_filter_stations(
+    payload: StationFilterRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationFilterResponse:
+    return DiscoveryService.filter_stations(
+        db=db,
+        user=current_user,
+        connector_types=payload.connector_types,
+        min_power_kw=payload.min_power_kw,
+        available_now=payload.available_now,
+        max_price_kwh=payload.max_price_kwh,
+        amenities=payload.amenities,
+        vehicle_id=payload.vehicle_id,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        radius_km=payload.radius_km,
+        limit=payload.limit,
+        offset=payload.offset,
+    )
+
 
 
