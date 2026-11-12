@@ -1,0 +1,932 @@
+from fastapi import APIRouter, Depends, Path, Query, Request, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.api.deps import get_current_user
+from app.db.session import get_db
+from app.models.user import User
+from app.schemas.discovery import (
+    NearbyStationSearchRequest,
+    NearbyStationSearchResponse,
+    StationAvailabilityMarker,
+    StationAvailabilityMarkersResponse,
+    BatchAvailabilityMarkersRequest,
+    StationFilterRequest,
+    StationFilterResponse,
+    StationSortRequest,
+    StationSortResponse,
+    StationSortBy,
+    SortOrder,
+    StationTextSearchRequest,
+    StationTextSearchResponse,
+    ClusteredMapViewRequest,
+    ClusteredMapViewResponse,
+    PaginatedStationListResponse,
+    StationDetailResponse,
+    FavouriteStationRequest,
+    FavouriteStationActionResponse,
+    FavouriteStationListResponse,
+    StationReviewCreateRequest,
+    StationReviewCreateResponse,
+    StationReviewListResponse,
+    FaultyChargerReportByPathRequest,
+    FaultyChargerReportCreateRequest,
+    FaultyChargerReportStatusUpdateRequest,
+    FaultyChargerReportItem,
+    FaultyChargerReportCreateResponse,
+    FaultyChargerReportListResponse,
+)
+from app.services.discovery_service import DiscoveryService
+
+router = APIRouter(tags=["Station Discovery"])
+
+
+@router.get(
+    "/stations/nearby-station-search",
+    response_model=NearbyStationSearchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Nearby station search (SW Architecture Route)",
+    description=(
+        "Displays nearby stations on a map and in a list based on driver's location "
+        "within a selectable radius (default 10 km, range 1 to 50 km) (REQ-F2-07 / CS19-033)."
+    ),
+)
+def get_nearby_stations(
+    latitude: float = Query(
+        ...,
+        ge=-90.0,
+        le=90.0,
+        description="Driver latitude coordinate [-90.0, 90.0]",
+    ),
+    longitude: float = Query(
+        ...,
+        ge=-180.0,
+        le=180.0,
+        description="Driver longitude coordinate [-180.0, 180.0]",
+    ),
+    radius_km: float = Query(
+        default=10.0,
+        ge=1.0,
+        le=50.0,
+        description="Search radius in kilometers [1.0, 50.0] (default: 10.0 km)",
+    ),
+    limit: int = Query(default=50, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> NearbyStationSearchResponse:
+    return DiscoveryService.get_nearby_stations(
+        db=db,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        limit=limit,
+        user=current_user,
+    )
+
+
+@router.post(
+    "/stations/nearby-station-search",
+    response_model=NearbyStationSearchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Nearby station search with JSON payload",
+    description="POST alternative to query nearby stations using request body (REQ-F2-07).",
+)
+def post_nearby_stations(
+    payload: NearbyStationSearchRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> NearbyStationSearchResponse:
+    return DiscoveryService.get_nearby_stations(
+        db=db,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        radius_km=payload.radius_km,
+        limit=payload.limit,
+        user=current_user,
+    )
+
+
+# =========================================================================
+# Availability Markers Endpoints (REQ-F2-08 / CS19-034 / Architecture Doc Page 6)
+# =========================================================================
+
+@router.get(
+    "/stations/availability-markers",
+    response_model=StationAvailabilityMarkersResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get station availability markers (SW Architecture Route)",
+    description=(
+        "Retrieves colour-coded availability markers for stations showing available/total connectors "
+        "and accessible status text labels (REQ-F2-08 / CS19-034)."
+    ),
+)
+def get_availability_markers(
+    station_id: int | None = Query(default=None, description="Optional specific station ID"),
+    latitude: float | None = Query(default=None, ge=-90.0, le=90.0, description="Optional center latitude"),
+    longitude: float | None = Query(default=None, ge=-180.0, le=180.0, description="Optional center longitude"),
+    radius_km: float = Query(default=10.0, ge=1.0, le=50.0, description="Radius in km [1.0, 50.0]"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationAvailabilityMarkersResponse:
+    return DiscoveryService.get_availability_markers(
+        db=db,
+        station_id=station_id,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        user=current_user,
+    )
+
+
+@router.patch(
+    "/stations/availability-markers",
+    response_model=StationAvailabilityMarkersResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Batch query availability markers via PATCH (SW Architecture Route)",
+    description="Matching SW Architecture Page 6 PATCH method: Batch retrieve availability markers for station IDs.",
+)
+def patch_availability_markers(
+    payload: BatchAvailabilityMarkersRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationAvailabilityMarkersResponse:
+    return DiscoveryService.get_availability_markers(
+        db=db,
+        station_ids=payload.station_ids,
+        user=current_user,
+    )
+
+
+@router.post(
+    "/stations/availability-markers",
+    response_model=StationAvailabilityMarkersResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Batch query availability markers via POST",
+    description="Batch retrieve availability markers for a list of station IDs (REQ-F2-08).",
+)
+def post_availability_markers(
+    payload: BatchAvailabilityMarkersRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationAvailabilityMarkersResponse:
+    return DiscoveryService.get_availability_markers(
+        db=db,
+        station_ids=payload.station_ids,
+        user=current_user,
+    )
+
+
+@router.get(
+    "/stations/{station_id}/availability-marker",
+    response_model=StationAvailabilityMarker,
+    status_code=status.HTTP_200_OK,
+    summary="Get single station availability marker",
+    description="Retrieves the colour-coded availability marker for a specific station (REQ-F2-08).",
+)
+def get_single_station_availability_marker(
+    station_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationAvailabilityMarker:
+    response = DiscoveryService.get_availability_markers(
+        db=db,
+        station_id=station_id,
+        user=current_user,
+    )
+    if not response.markers:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Station with ID {station_id} not found or not active.",
+        )
+    return response.markers[0]
+
+
+# =========================================================================
+# Station Filtering Endpoints (REQ-F2-09 / CS19-035 / Architecture Doc Page 6)
+# =========================================================================
+
+@router.get(
+    "/stations/filter-stations",
+    response_model=StationFilterResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Filter stations (SW Architecture Route)",
+    description=(
+        "Filters stations by connector type, minimum power, availability now, "
+        "maximum price per kWh, amenities, and vehicle compatibility (REQ-F2-09 / CS19-035)."
+    ),
+)
+def get_filter_stations(
+    connector_types: list[str] | None = Query(default=None, description="Connector types: CCS2, CHAdeMO, Type 2, GB/T"),
+    min_power_kw: float | None = Query(default=None, ge=0.0, le=500.0, description="Minimum power in kW"),
+    available_now: bool | None = Query(default=None, description="Only stations with Available connectors"),
+    max_price_kwh: float | None = Query(default=None, ge=0.0, description="Max price per kWh"),
+    amenities: list[str] | None = Query(default=None, description="Required amenities e.g. WiFi, Cafe"),
+    vehicle_id: int | None = Query(default=None, description="Vehicle ID for compatibility filtering"),
+    latitude: float | None = Query(default=None, ge=-90.0, le=90.0, description="Center latitude"),
+    longitude: float | None = Query(default=None, ge=-180.0, le=180.0, description="Center longitude"),
+    radius_km: float = Query(default=10.0, ge=1.0, le=50.0, description="Radius in km [1.0, 50.0]"),
+    sort_by: str | None = Query(default=None, description="Sort criteria: distance, price, power, availability (REQ-F2-10)"),
+    sort_order: str | None = Query(default=None, description="Sort direction: 'asc' or 'desc'"),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationFilterResponse:
+    return DiscoveryService.filter_stations(
+        db=db,
+        user=current_user,
+        connector_types=connector_types,
+        min_power_kw=min_power_kw,
+        available_now=available_now,
+        max_price_kwh=max_price_kwh,
+        amenities=amenities,
+        vehicle_id=vehicle_id,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/stations/filter-stations",
+    response_model=StationFilterResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Filter stations with JSON payload",
+    description="POST alternative to filter stations using request body (REQ-F2-09).",
+)
+def post_filter_stations(
+    payload: StationFilterRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationFilterResponse:
+    return DiscoveryService.filter_stations(
+        db=db,
+        user=current_user,
+        connector_types=payload.connector_types,
+        min_power_kw=payload.min_power_kw,
+        available_now=payload.available_now,
+        max_price_kwh=payload.max_price_kwh,
+        amenities=payload.amenities,
+        vehicle_id=payload.vehicle_id,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        radius_km=payload.radius_km,
+        sort_by=payload.sort_by,
+        sort_order=payload.sort_order,
+        limit=payload.limit,
+        offset=payload.offset,
+    )
+
+
+# =========================================================================
+# Station Sorting Endpoints (REQ-F2-10 / CS19-036 / Architecture Doc Page 6)
+# =========================================================================
+
+@router.get(
+    "/stations/sort-stations",
+    response_model=StationSortResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Sort stations (SW Architecture Route)",
+    description=(
+        "Sorts charging stations by distance, price, power, or availability (REQ-F2-10 / CS19-036). "
+        "Allows ascending or descending ordering with intelligent defaults."
+    ),
+)
+def get_sort_stations(
+    sort_by: str = Query(
+        default="distance",
+        description="Sort criteria: distance, price, power, availability (REQ-F2-10)",
+    ),
+    sort_order: str | None = Query(
+        default=None,
+        description="Sort direction: 'asc' or 'desc'. Defaults: distance/price: asc, power/availability: desc",
+    ),
+    latitude: float | None = Query(
+        default=None,
+        ge=-90.0,
+        le=90.0,
+        description="Driver latitude coordinate [-90.0, 90.0]",
+    ),
+    longitude: float | None = Query(
+        default=None,
+        ge=-180.0,
+        le=180.0,
+        description="Driver longitude coordinate [-180.0, 180.0]",
+    ),
+    radius_km: float = Query(
+        default=10.0,
+        ge=1.0,
+        le=50.0,
+        description="Search radius in kilometers [1.0, 50.0]",
+    ),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationSortResponse:
+    return DiscoveryService.sort_stations(
+        db=db,
+        user=current_user,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/stations/sort-stations",
+    response_model=StationSortResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Sort stations with JSON payload",
+    description="POST alternative to sort stations by distance, price, power, or availability (REQ-F2-10).",
+)
+def post_sort_stations(
+    payload: StationSortRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationSortResponse:
+    return DiscoveryService.sort_stations(
+        db=db,
+        user=current_user,
+        sort_by=payload.sort_by,
+        sort_order=payload.sort_order,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        radius_km=payload.radius_km,
+        station_ids=payload.station_ids,
+        limit=payload.limit,
+        offset=payload.offset,
+    )
+
+
+# =========================================================================
+# Station Free-Text Search Endpoints (REQ-F2-11 / CS19-037 / Architecture Doc Page 6)
+# =========================================================================
+
+@router.get(
+    "/stations/text-search",
+    response_model=StationTextSearchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Search stations by text (SW Architecture Route)",
+    description=(
+        "Searches charging stations by name, address, or geographic area (REQ-F2-11 / CS19-037). "
+        "Case-insensitive matching with relevance ranking and visibility gating."
+    ),
+)
+def get_text_search_stations(
+    q: str = Query(
+        ...,
+        alias="query",
+        min_length=1,
+        max_length=100,
+        description="Search term matching station name, address, or area",
+    ),
+    latitude: float | None = Query(default=None, ge=-90.0, le=90.0, description="Driver latitude"),
+    longitude: float | None = Query(default=None, ge=-180.0, le=180.0, description="Driver longitude"),
+    radius_km: float | None = Query(default=None, ge=1.0, le=50.0, description="Search radius in km"),
+    sort_by: str | None = Query(default=None, description="Optional sort criteria: distance, price, power, availability"),
+    sort_order: str | None = Query(default=None, description="Optional sort order: asc, desc"),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationTextSearchResponse:
+    return DiscoveryService.text_search_stations(
+        db=db,
+        query=q,
+        user=current_user,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/stations/text-search",
+    response_model=StationTextSearchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Search stations by text with JSON payload",
+    description="POST alternative to search stations by text query in request body (REQ-F2-11).",
+)
+def post_text_search_stations(
+    payload: StationTextSearchRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationTextSearchResponse:
+    return DiscoveryService.text_search_stations(
+        db=db,
+        query=payload.query,
+        user=current_user,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        radius_km=payload.radius_km,
+        sort_by=payload.sort_by,
+        sort_order=payload.sort_order,
+        limit=payload.limit,
+        offset=payload.offset,
+    )
+
+
+# =========================================================================
+# Map Marker Clustering and Pagination Endpoints (REQ-F2-12 / CS19-038)
+# =========================================================================
+
+@router.get(
+    "/stations/map-view",
+    response_model=ClusteredMapViewResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get stations for map view with clustering (SW Architecture Route)",
+    description=(
+        "Retrieves stations for map display. Automatically clusters markers when >50 stations "
+        "are in view per REQ-F2-12 / CS19-038."
+    ),
+)
+def get_clustered_map_view_endpoint(
+    latitude: float | None = Query(default=None, ge=-90.0, le=90.0, description="Center latitude"),
+    longitude: float | None = Query(default=None, ge=-180.0, le=180.0, description="Center longitude"),
+    radius_km: float = Query(default=50.0, ge=1.0, le=50.0, description="Search radius in km"),
+    threshold: int = Query(default=50, ge=1, le=100, description="Clustering threshold (default: 50 per REQ-F2-12)"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ClusteredMapViewResponse:
+    return DiscoveryService.get_map_view(
+        db=db,
+        user=current_user,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        threshold=threshold,
+    )
+
+
+@router.post(
+    "/stations/map-view",
+    response_model=ClusteredMapViewResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get stations for map view with clustering via JSON payload",
+    description="POST alternative to query clustered map view (REQ-F2-12).",
+)
+def post_clustered_map_view_endpoint(
+    payload: ClusteredMapViewRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ClusteredMapViewResponse:
+    return DiscoveryService.get_map_view(
+        db=db,
+        user=current_user,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        radius_km=payload.radius_km,
+        threshold=payload.threshold,
+    )
+
+
+@router.get(
+    "/stations/paginated-search",
+    response_model=PaginatedStationListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get paginated list of stations (20/page default)",
+    description=(
+        "Retrieves paginated charging station list results defaulting to 20/page (REQ-F2-12 / CS19-038). "
+        "Provides total_pages, has_next, and has_prev navigation indicators."
+    ),
+)
+def get_paginated_stations_endpoint(
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed, default 1)"),
+    page_size: int = Query(default=20, ge=1, le=100, description="Page size (default 20/page per REQ-F2-12)"),
+    latitude: float | None = Query(default=None, ge=-90.0, le=90.0, description="Driver latitude"),
+    longitude: float | None = Query(default=None, ge=-180.0, le=180.0, description="Driver longitude"),
+    radius_km: float = Query(default=50.0, ge=1.0, le=50.0, description="Search radius in km"),
+    sort_by: str | None = Query(default=None, description="Sort criteria: distance, price, power, availability"),
+    sort_order: str | None = Query(default=None, description="Sort order: asc, desc"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PaginatedStationListResponse:
+    return DiscoveryService.get_paginated_stations(
+        db=db,
+        user=current_user,
+        page=page,
+        page_size=page_size,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+
+
+@router.get(
+    "/stations/station-detail",
+    response_model=StationDetailResponse,
+    summary="Get full station detail (REQ-F2-13)",
+)
+def get_station_detail_query(
+    station_id: int = Query(..., description="ID of the station to inspect"),
+    latitude: float | None = Query(None, description="Optional user latitude for distance calculation"),
+    longitude: float | None = Query(None, description="Optional user longitude for distance calculation"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Station detail screen contract route (`GET /api/v1/stations/station-detail`) per REQ-F2-13 / SR-F2-03.
+    """
+    return DiscoveryService.get_station_detail(
+        db=db,
+        station_id=station_id,
+        user=current_user,
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+
+@router.get(
+    "/stations/{station_id}/detail",
+    response_model=StationDetailResponse,
+    summary="Get full station detail by path ID (REQ-F2-13)",
+)
+def get_station_detail_by_path(
+    station_id: int = Path(..., description="ID of the station to inspect"),
+    latitude: float | None = Query(None, description="Optional user latitude for distance calculation"),
+    longitude: float | None = Query(None, description="Optional user longitude for distance calculation"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    RESTful station detail alias (`GET /api/v1/stations/{station_id}/detail`) per REQ-F2-13 / SR-F2-03.
+    """
+    return DiscoveryService.get_station_detail(
+        db=db,
+        station_id=station_id,
+        user=current_user,
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+
+@router.get(
+    "/stations/favourite-stations",
+    response_model=FavouriteStationListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List driver favourite stations (REQ-F2-14)",
+)
+def get_favourite_stations(
+    latitude: float | None = Query(None, description="Optional driver latitude for distance calculation"),
+    longitude: float | None = Query(None, description="Optional driver longitude for distance calculation"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    List favourite stations saved by the authenticated driver (`GET /api/v1/stations/favourite-stations`, REQ-F2-14).
+    """
+    return DiscoveryService.list_favourite_stations(
+        db=db,
+        user=current_user,
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+
+@router.post(
+    "/stations/favourite-stations",
+    response_model=FavouriteStationActionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Save a favourite station (REQ-F2-14)",
+)
+def save_favourite_station_endpoint(
+    payload: FavouriteStationRequest,
+    request: Request,
+    latitude: float | None = Query(None, description="Optional driver latitude for distance calculation"),
+    longitude: float | None = Query(None, description="Optional driver longitude for distance calculation"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Save an approved active station to the driver's favourites (REQ-F2-14).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.save_favourite_station(
+        db=db,
+        user=current_user,
+        station_id=payload.station_id,
+        latitude=latitude,
+        longitude=longitude,
+        ip_address=client_ip,
+    )
+
+
+@router.delete(
+    "/stations/favourite-stations",
+    response_model=FavouriteStationActionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Remove a favourite station (REQ-F2-14)",
+)
+def remove_favourite_station_query_endpoint(
+    request: Request,
+    station_id: int = Query(..., description="ID of the station to remove from favourites"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Remove a saved station from the driver's favourites by query param (REQ-F2-14).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.remove_favourite_station(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        ip_address=client_ip,
+    )
+
+
+@router.post(
+    "/stations/{station_id}/favourite",
+    response_model=FavouriteStationActionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Save a favourite station by path ID (REQ-F2-14)",
+)
+def save_favourite_station_by_path(
+    request: Request,
+    station_id: int = Path(..., description="ID of the station to save as favourite"),
+    latitude: float | None = Query(None, description="Optional driver latitude for distance calculation"),
+    longitude: float | None = Query(None, description="Optional driver longitude for distance calculation"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    RESTful alias to save a favourite station (`POST /api/v1/stations/{station_id}/favourite`, REQ-F2-14).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.save_favourite_station(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        latitude=latitude,
+        longitude=longitude,
+        ip_address=client_ip,
+    )
+
+
+@router.delete(
+    "/stations/{station_id}/favourite",
+    response_model=FavouriteStationActionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Remove a favourite station by path ID (REQ-F2-14)",
+)
+def remove_favourite_station_by_path(
+    request: Request,
+    station_id: int = Path(..., description="ID of the station to remove from favourites"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    RESTful alias to remove a favourite station (`DELETE /api/v1/stations/{station_id}/favourite`, REQ-F2-14).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.remove_favourite_station(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        ip_address=client_ip,
+    )
+
+
+@router.post(
+    "/stations/rate-a-station",
+    response_model=StationReviewCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Rate and review a station (SW Architecture Route, REQ-F2-15)",
+)
+def rate_a_station(
+    payload: StationReviewCreateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Submit a rating (1-5) and optional review for a station once per completed session
+    (`POST /api/v1/stations/rate-a-station`, REQ-F2-15).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.create_station_review(
+        db=db,
+        user=current_user,
+        booking_id=payload.booking_id,
+        rating=payload.rating,
+        comment=payload.comment,
+        station_id=payload.station_id,
+        ip_address=client_ip,
+    )
+
+
+@router.get(
+    "/stations/rate-a-station",
+    response_model=StationReviewListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List reviews for a station (REQ-F2-15)",
+)
+def get_station_reviews_by_query(
+    station_id: int = Query(..., description="ID of the station to list reviews for"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    List station reviews and average rating summary (`GET /api/v1/stations/rate-a-station`, REQ-F2-15).
+    """
+    return DiscoveryService.list_station_reviews(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+    )
+
+
+@router.post(
+    "/stations/{station_id}/reviews",
+    response_model=StationReviewCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit a rating and review for a station by path ID (REQ-F2-15)",
+)
+def create_station_review_by_path(
+    payload: StationReviewCreateRequest,
+    request: Request,
+    station_id: int = Path(..., description="ID of the station being reviewed"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    RESTful alias to submit a station review (`POST /api/v1/stations/{station_id}/reviews`, REQ-F2-15).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.create_station_review(
+        db=db,
+        user=current_user,
+        booking_id=payload.booking_id,
+        rating=payload.rating,
+        comment=payload.comment,
+        station_id=station_id,
+        ip_address=client_ip,
+    )
+
+
+@router.get(
+    "/stations/{station_id}/reviews",
+    response_model=StationReviewListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List reviews for a station by path ID (REQ-F2-15)",
+)
+def list_station_reviews_by_path(
+    station_id: int = Path(..., description="ID of the station to list reviews for"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    RESTful alias to list station reviews and average rating (`GET /api/v1/stations/{station_id}/reviews`, REQ-F2-15).
+    """
+    return DiscoveryService.list_station_reviews(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+    )
+
+
+@router.post(
+    "/stations/report-faulty-charger",
+    response_model=FaultyChargerReportCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Report a faulty charger (SW Architecture Route, REQ-F2-16)",
+)
+def report_faulty_charger_endpoint(
+    payload: FaultyChargerReportCreateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Submit a faulty charger report as a driver and forward it to the station's operator
+    (`POST /api/v1/stations/report-faulty-charger`, REQ-F2-16).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.report_faulty_charger(
+        db=db,
+        user=current_user,
+        charger_id=payload.charger_id,
+        description=payload.description,
+        station_id=payload.station_id,
+        connector_id=payload.connector_id,
+        fault_type=payload.fault_type,
+        severity=payload.severity,
+        ip_address=client_ip,
+    )
+
+
+@router.get(
+    "/stations/report-faulty-charger",
+    response_model=FaultyChargerReportListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List faulty charger reports scoped to caller role (REQ-F2-16)",
+)
+def list_faulty_charger_reports_endpoint(
+    station_id: int | None = Query(None, description="Optional station ID filter"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    List faulty charger reports (`GET /api/v1/stations/report-faulty-charger`, REQ-F2-16).
+    Drivers see only their own reports; operators see reports forwarded to their stations.
+    """
+    return DiscoveryService.list_fault_reports(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+    )
+
+
+@router.post(
+    "/stations/chargers/{charger_id}/report-fault",
+    response_model=FaultyChargerReportCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Report a faulty charger by path ID (REQ-F2-16)",
+)
+def report_faulty_charger_by_path(
+    payload: FaultyChargerReportByPathRequest,
+    request: Request,
+    charger_id: int = Path(..., description="ID of the faulty charger"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    RESTful alias to submit a faulty charger report (`POST /api/v1/stations/chargers/{charger_id}/report-fault`).
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.report_faulty_charger(
+        db=db,
+        user=current_user,
+        charger_id=charger_id,
+        description=payload.description,
+        station_id=payload.station_id,
+        connector_id=payload.connector_id,
+        fault_type=payload.fault_type,
+        severity=payload.severity,
+        ip_address=client_ip,
+    )
+
+
+@router.get(
+    "/stations/{station_id}/fault-reports",
+    response_model=FaultyChargerReportListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List faulty charger reports for a station (REQ-F2-16)",
+)
+def list_station_fault_reports_by_path(
+    station_id: int = Path(..., description="ID of the station"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Station-scoped faulty charger reports for owning operators, admins, or the reporting driver.
+    """
+    return DiscoveryService.list_fault_reports(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+    )
+
+
+@router.patch(
+    "/stations/fault-reports/{report_id}/status",
+    response_model=FaultyChargerReportItem,
+    status_code=status.HTTP_200_OK,
+    summary="Update forwarded fault report status as operator (REQ-F2-16)",
+)
+def update_fault_report_status_endpoint(
+    payload: FaultyChargerReportStatusUpdateRequest,
+    request: Request,
+    report_id: int = Path(..., description="ID of the fault report"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Allow owning station operator (or Admin) to acknowledge or resolve a forwarded fault report.
+    """
+    client_ip = request.client.host if request.client else None
+    return DiscoveryService.update_fault_report_status(
+        db=db,
+        user=current_user,
+        report_id=report_id,
+        new_status=payload.status,
+        operator_notes=payload.operator_notes,
+        ip_address=client_ip,
+    )
+
+
+

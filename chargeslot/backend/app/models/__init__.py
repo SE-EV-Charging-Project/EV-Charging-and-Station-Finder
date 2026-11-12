@@ -7,6 +7,16 @@ from app.models.vehicle import Vehicle, ConnectorType
 from app.models.booking import Booking, BookingStatus
 from app.models.station import Station, StationStatus
 from app.models.charger import Charger, Connector, CurrentType, ConnectorStatus
+from app.models.maintenance import MaintenanceWindow
+from app.models.favourite import FavouriteStation
+from app.models.review import StationReview
+from app.models.fault_report import (
+    FaultReportStatus,
+    FaultSeverity,
+    FaultType,
+    FaultyChargerReport,
+)
+from app.models.connector_status_event import ConnectorStatusEvent
 
 __all__ = [
     "User",
@@ -28,4 +38,12 @@ __all__ = [
     "Connector",
     "CurrentType",
     "ConnectorStatus",
+    "MaintenanceWindow",
+    "FavouriteStation",
+    "StationReview",
+    "FaultReportStatus",
+    "FaultSeverity",
+    "FaultType",
+    "FaultyChargerReport",
+    "ConnectorStatusEvent",
 ]

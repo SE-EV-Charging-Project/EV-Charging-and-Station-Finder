@@ -38,6 +38,7 @@ class Station(Base):
     operating_hours: Mapped[str] = mapped_column(String(100), default="24 hours", nullable=False)
     contact_phone: Mapped[str] = mapped_column(String(20), nullable=False)
     contact_email: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    price_per_kwh: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
 
     status: Mapped[StationStatus] = mapped_column(
         Enum(StationStatus, name="station_status_enum", native_enum=False),
@@ -68,3 +69,6 @@ class Station(Base):
     operator = relationship("User", foreign_keys=[operator_id], back_populates="stations")
     reviewer = relationship("User", foreign_keys=[reviewed_by_admin_id])
     chargers = relationship("Charger", back_populates="station", cascade="all, delete-orphan")
+    maintenance_windows = relationship("MaintenanceWindow", back_populates="station", cascade="all, delete-orphan")
+    favourited_by = relationship("FavouriteStation", back_populates="station", cascade="all, delete-orphan")
+    reviews = relationship("StationReview", back_populates="station", cascade="all, delete-orphan")

@@ -10,23 +10,11 @@ from app.utils.security import decode_token
 security = HTTPBearer(auto_error=False)
 
 
-def get_current_user(
-    db: Session = Depends(get_db),
-    credentials: HTTPAuthorizationCredentials | None = Depends(security)
-) -> User:
+def resolve_user_from_access_token(db: Session, token: str) -> User:
     """
-    Validates JWT access token and retrieves current authenticated user.
-    Enforces server-side authentication (CS19-011 / REQ-F1-11).
-    Raises 401 Unauthorized for missing, expired, invalid, or wrong-type tokens.
+    Decode and validate an access JWT token and return the active User (CS19-011).
+    Shared by REST Bearer auth and WebSocket channel authentication.
     """
-    if credentials is None or not credentials.credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated. Bearer token required.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    token = credentials.credentials
     try:
         payload = decode_token(token)
     except Exception:
@@ -76,6 +64,25 @@ def get_current_user(
         )
 
     return user
+
+
+def get_current_user(
+    db: Session = Depends(get_db),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security)
+) -> User:
+    """
+    Validates JWT access token and retrieves current authenticated user.
+    Enforces server-side authentication (CS19-011 / REQ-F1-11).
+    Raises 401 Unauthorized for missing, expired, invalid, or wrong-type tokens.
+    """
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated. Bearer token required.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return resolve_user_from_access_token(db=db, token=credentials.credentials)
 
 
 def get_current_active_user(

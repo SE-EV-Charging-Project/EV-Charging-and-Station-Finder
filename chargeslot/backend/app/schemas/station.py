@@ -15,6 +15,7 @@ class StationCreateRequest(BaseModel):
     operating_hours: str = Field(default="24 hours", min_length=1, max_length=100, description="Operating hours e.g. '24 hours' or '08:00-22:00'")
     contact_phone: str = Field(..., min_length=5, max_length=20, description="Station contact phone number")
     contact_email: EmailStr | None = Field(default=None, description="Optional contact email")
+    price_per_kwh: float | None = Field(default=None, ge=0.0, description="Tariff price per kWh in INR")
 
     @field_validator("name", "address", "operating_hours", "contact_phone")
     @classmethod
@@ -37,6 +38,7 @@ class StationUpdateRequest(BaseModel):
     operating_hours: str | None = Field(default=None, min_length=1, max_length=100)
     contact_phone: str | None = Field(default=None, min_length=5, max_length=20)
     contact_email: EmailStr | None = None
+    price_per_kwh: float | None = Field(default=None, ge=0.0)
     is_active: bool | None = None
 
     @field_validator("name", "address", "operating_hours", "contact_phone")
@@ -64,6 +66,7 @@ class StationResponse(BaseModel):
     operating_hours: str
     contact_phone: str
     contact_email: str | None
+    price_per_kwh: float | None = None
     status: StationStatus
     is_active: bool
     rejection_reason: str | None = None

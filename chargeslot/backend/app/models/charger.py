@@ -66,6 +66,7 @@ class Charger(Base):
 
     station = relationship("Station", back_populates="chargers")
     connectors = relationship("Connector", back_populates="charger", cascade="all, delete-orphan")
+    maintenance_windows = relationship("MaintenanceWindow", back_populates="charger", cascade="all, delete-orphan")
 
 
 class Connector(Base):
