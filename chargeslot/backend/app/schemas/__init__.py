@@ -100,6 +100,10 @@ from app.schemas.discovery import (
     ClusteredMapViewResponse,
     ClusteredMapViewRequest,
     PaginatedStationListResponse,
+    StationOperatorSummary,
+    StationDetailConnectorItem,
+    StationDetailChargerItem,
+    StationDetailResponse,
 )
 
 __all__ = [
@@ -189,4 +193,8 @@ __all__ = [
     "ClusteredMapViewResponse",
     "ClusteredMapViewRequest",
     "PaginatedStationListResponse",
+    "StationOperatorSummary",
+    "StationDetailConnectorItem",
+    "StationDetailChargerItem",
+    "StationDetailResponse",
 ]
