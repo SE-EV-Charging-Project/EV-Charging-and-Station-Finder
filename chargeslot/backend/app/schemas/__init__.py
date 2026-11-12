@@ -80,6 +80,12 @@ from app.schemas.maintenance import (
     SlotAvailabilityCheckResponse,
 )
 
+from app.schemas.discovery import (
+    NearbyStationSearchRequest,
+    NearbyStationItem,
+    NearbyStationSearchResponse,
+)
+
 __all__ = [
     "UserRegisterRequest",
     "UserLoginRequest",
@@ -148,4 +154,7 @@ __all__ = [
     "SlotItem",
     "SlotAvailabilityCheckRequest",
     "SlotAvailabilityCheckResponse",
+    "NearbyStationSearchRequest",
+    "NearbyStationItem",
+    "NearbyStationSearchResponse",
 ]
