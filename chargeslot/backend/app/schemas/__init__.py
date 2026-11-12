@@ -78,6 +78,10 @@ from app.schemas.booking import (
     ChargingCostEstimateResponse,
     ChargingTimeEstimateRequest,
     ChargingTimeEstimateResponse,
+    ManualSlotBookingRequest,
+    ManualSlotBookingResponse,
+    RecommendedSlotItem,
+    RecommendedSlotsResponse,
 )
 
 from app.schemas.maintenance import (
@@ -211,6 +215,10 @@ __all__ = [
     "ChargingCostEstimateResponse",
     "ChargingTimeEstimateRequest",
     "ChargingTimeEstimateResponse",
+    "ManualSlotBookingRequest",
+    "ManualSlotBookingResponse",
+    "RecommendedSlotItem",
+    "RecommendedSlotsResponse",
     "MaintenanceWindowCreateRequest",
     "MaintenanceWindowUpdateRequest",
     "MaintenanceWindowResponse",

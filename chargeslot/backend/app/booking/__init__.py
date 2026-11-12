@@ -12,6 +12,7 @@ from app.booking.battery import (
     estimate_charging_time,
     get_vehicle_battery,
 )
+from app.booking.slots import create_manual_slot_booking, recommend_slots
 from app.booking.validators import validate_battery_level_input, get_battery_rules
 
 __all__ = [
@@ -23,6 +24,8 @@ __all__ = [
     "compute_charging_cost",
     "estimate_charging_time",
     "estimate_charging_cost",
+    "recommend_slots",
+    "create_manual_slot_booking",
     "validate_battery_level_input",
     "get_battery_rules",
 ]

@@ -6,7 +6,7 @@ Test Case IDs: TC-F3-01, TC-F3-02, TC-F3-07, TC-F3-08, TC-F3-09
 System Test Case ID: STC-F3-01
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -26,8 +26,9 @@ from app.booking.validators import validate_battery_level_input, get_battery_rul
 from app.models.audit import AuditLog
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle, ConnectorType
-from app.models.charger import Charger, CurrentType
-from app.models.station import Station
+from app.models.charger import Charger, Connector, ConnectorStatus, CurrentType
+from app.models.station import Station, StationStatus
+from app.models.maintenance import MaintenanceWindow
 from app.services.booking_service import BookingService
 from app.services.vehicle_service import VehicleService
 from app.utils.security import hash_password, create_access_token
@@ -260,6 +261,8 @@ def alice_station(db_session: Session, driver_alice: User) -> Station:
         longitude=77.5946,
         contact_phone="+919876543205",
         price_per_kwh=8.5,
+        operating_hours="08:00 - 20:00",
+        status=StationStatus.APPROVED,
     )
     db_session.add(station)
     db_session.commit()
@@ -279,6 +282,19 @@ def alice_charger(db_session: Session, alice_station: Station) -> Charger:
     db_session.commit()
     db_session.refresh(charger)
     return charger
+
+
+@pytest.fixture
+def alice_connector(db_session: Session, alice_charger: Charger) -> Connector:
+    connector = Connector(
+        charger_id=alice_charger.id,
+        connector_type=ConnectorType.CCS2,
+        status=ConnectorStatus.AVAILABLE,
+    )
+    db_session.add(connector)
+    db_session.commit()
+    db_session.refresh(connector)
+    return connector
 
 
 def test_tc_f3_02_rejects_fractional_battery_and_target_percentages(
@@ -477,6 +493,193 @@ def test_tc_f3_09_cost_estimate_uses_station_tariff_and_checks_ownership(
         headers=headers,
     )
     assert missing_tariff_response.status_code == 409
+
+
+def test_tc_f3_10_recommended_slots_rank_by_start_then_tariff_and_duration(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+    alice_station: Station,
+    alice_connector: Connector,
+):
+    alice_vehicle.current_soc = 20
+    alice_connector.status = ConnectorStatus.OCCUPIED
+    cheaper_station = Station(
+        operator_id=driver_alice.id,
+        name="Cheaper Estimate Station",
+        address="2 Test Road",
+        latitude=12.972,
+        longitude=77.595,
+        contact_phone="+919876543206",
+        price_per_kwh=5.0,
+        operating_hours="08:00 - 20:00",
+        status=StationStatus.APPROVED,
+    )
+    db_session.add(cheaper_station)
+    db_session.commit()
+    cheaper_charger = Charger(
+        station_id=cheaper_station.id,
+        power_kw=30.0,
+        current_type=CurrentType.DC,
+        gateway_id="cheaper-estimate-gateway",
+    )
+    db_session.add(cheaper_charger)
+    db_session.commit()
+    db_session.refresh(cheaper_charger)
+    db_session.add(
+        Connector(
+            charger_id=cheaper_charger.id,
+            connector_type=ConnectorType.CCS2,
+            status=ConnectorStatus.AVAILABLE,
+        )
+    )
+    db_session.commit()
+    slower_charger = Charger(
+        station_id=cheaper_station.id,
+        power_kw=15.0,
+        current_type=CurrentType.DC,
+        gateway_id="slower-estimate-gateway",
+    )
+    db_session.add(slower_charger)
+    db_session.commit()
+    db_session.refresh(slower_charger)
+    db_session.add(
+        Connector(
+            charger_id=slower_charger.id,
+            connector_type=ConnectorType.CCS2,
+            status=ConnectorStatus.AVAILABLE,
+        )
+    )
+    db_session.commit()
+
+    slot_date = datetime.now(timezone.utc).date() + timedelta(days=1)
+    response = client.get(
+        "/api/v1/bookings/recommended-slots",
+        params={
+            "vehicle_id": alice_vehicle.id,
+            "date": slot_date.isoformat(),
+            "target_soc": 80,
+            "limit": 4,
+        },
+        headers={"Authorization": f"Bearer {make_token(driver_alice)}"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["total"] > len(data["items"])
+    assert [item["rank"] for item in data["items"]] == [1, 2, 3, 4]
+    first_start = datetime.fromisoformat(
+        data["items"][0]["start_time"].replace("Z", "+00:00")
+    )
+    second_start = datetime.fromisoformat(
+        data["items"][1]["start_time"].replace("Z", "+00:00")
+    )
+    assert first_start == second_start
+    assert data["items"][0]["station_id"] == cheaper_station.id
+    assert data["items"][0]["charger_id"] == cheaper_charger.id
+    assert data["items"][1]["charger_id"] == slower_charger.id
+    assert data["items"][0]["price_per_kwh"] <= data["items"][1]["price_per_kwh"]
+    assert data["items"][0]["price_per_kwh"] == 5.0
+    assert data["items"][1]["price_per_kwh"] == 5.0
+    assert data["items"][0]["slot_length_minutes"] < data["items"][1]["slot_length_minutes"]
+    assert data["items"][0]["slot_length_minutes"] == 60
+    assert data["items"][0]["estimated_cost"] == 135.0
+    assert alice_station.id in {item["station_id"] for item in data["items"]}
+
+
+def test_tc_f3_11_manual_slot_booking_rejects_foreign_vehicle_and_overlaps(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+    alice_station: Station,
+    alice_charger: Charger,
+    alice_connector: Connector,
+    bob_vehicle: Vehicle,
+):
+    alice_vehicle.current_soc = 20
+    db_session.commit()
+    slot_date = datetime.now(timezone.utc).date() + timedelta(days=1)
+    start_time = datetime.combine(slot_date, time(9, 0), tzinfo=timezone.utc)
+    payload = {
+        "station_id": alice_station.id,
+        "charger_id": alice_charger.id,
+        "vehicle_id": alice_vehicle.id,
+        "start_time": start_time.isoformat(),
+        "target_soc": 80,
+    }
+    headers = {"Authorization": f"Bearer {make_token(driver_alice)}"}
+
+    wrong_connector_charger = Charger(
+        station_id=alice_station.id,
+        power_kw=30.0,
+        current_type=CurrentType.DC,
+        gateway_id="wrong-connector-gateway",
+    )
+    db_session.add(wrong_connector_charger)
+    db_session.commit()
+    db_session.refresh(wrong_connector_charger)
+    db_session.add(
+        Connector(
+            charger_id=wrong_connector_charger.id,
+            connector_type=ConnectorType.GBT,
+            status=ConnectorStatus.AVAILABLE,
+        )
+    )
+    maintenance_window = MaintenanceWindow(
+        station_id=alice_station.id,
+        charger_id=alice_charger.id,
+        title="Slot test maintenance",
+        start_time=start_time,
+        end_time=start_time + timedelta(minutes=60),
+        created_by_user_id=driver_alice.id,
+    )
+    db_session.add(maintenance_window)
+    db_session.commit()
+
+    maintenance_response = client.post(
+        "/api/v1/bookings/manual-slot",
+        json=payload,
+        headers=headers,
+    )
+    assert maintenance_response.status_code == 409
+    db_session.delete(maintenance_window)
+    db_session.commit()
+
+    incompatible_response = client.post(
+        "/api/v1/bookings/manual-slot",
+        json={**payload, "charger_id": wrong_connector_charger.id},
+        headers=headers,
+    )
+    assert incompatible_response.status_code == 422
+
+    response = client.post(
+        "/api/v1/bookings/manual-slot",
+        json=payload,
+        headers=headers,
+    )
+    assert response.status_code == 201
+    assert response.json()["status"] == "Confirmed"
+    assert response.json()["slot_length_minutes"] == 60
+    actual_end_time = datetime.fromisoformat(
+        response.json()["end_time"].replace("Z", "+00:00")
+    )
+    assert actual_end_time == start_time + timedelta(minutes=60)
+
+    overlap_response = client.post(
+        "/api/v1/bookings/manual-slot",
+        json={**payload, "start_time": (start_time + timedelta(minutes=45)).isoformat()},
+        headers=headers,
+    )
+    assert overlap_response.status_code == 409
+
+    foreign_vehicle_response = client.post(
+        "/api/v1/bookings/manual-slot",
+        json={**payload, "vehicle_id": bob_vehicle.id},
+        headers=headers,
+    )
+    assert foreign_vehicle_response.status_code == 403
 
 
 def test_tc_f3_07_charging_time_requires_owned_vehicle_and_saved_battery_level(
