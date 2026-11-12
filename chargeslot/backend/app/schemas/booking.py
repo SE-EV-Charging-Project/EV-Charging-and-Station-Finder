@@ -107,7 +107,7 @@ class ChargingTimeEstimateRequest(BaseModel):
 
     vehicle_id: int = Field(..., gt=0)
     charger_id: int = Field(..., gt=0)
-    target_soc: int = Field(default=80, ge=0, le=100)
+    target_soc: int = Field(default=80, ge=0, le=100, strict=True)
 
 
 class ChargingTimeEstimateResponse(BaseModel):
@@ -120,4 +120,27 @@ class ChargingTimeEstimateResponse(BaseModel):
     energy_required_kwh: float
     effective_charging_power_kw: float
     estimated_charging_time_minutes: float
+    slot_length_minutes: int
+    message: str
+
+
+class ChargingCostEstimateRequest(BaseModel):
+    """Request a tariff-based estimate for charging an owned vehicle."""
+
+    vehicle_id: int = Field(..., gt=0)
+    station_id: int = Field(..., gt=0)
+    target_soc: int = Field(default=80, ge=0, le=100, strict=True)
+
+
+class ChargingCostEstimateResponse(BaseModel):
+    """Estimated energy, station tariff, and charging cost."""
+
+    vehicle_id: int
+    station_id: int
+    current_soc: int
+    target_soc: int
+    energy_required_kwh: float
+    price_per_kwh: float
+    estimated_cost: float
+    currency: str = "INR"
     message: str

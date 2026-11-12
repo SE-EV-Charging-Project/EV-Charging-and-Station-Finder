@@ -13,11 +13,13 @@ from app.booking.battery import (
     compute_estimated_range as domain_compute_estimated_range,
     compute_energy_required as domain_compute_energy_required,
     estimate_charging_time as domain_estimate_charging_time,
+    estimate_charging_cost as domain_estimate_charging_cost,
 )
 from app.booking.validators import get_battery_rules as domain_get_battery_rules
 from app.models.user import User
 from app.schemas.booking import (
     BatteryLevelResponse,
+    ChargingCostEstimateResponse,
     ChargingTimeEstimateResponse,
 )
 
@@ -116,5 +118,22 @@ class BookingService:
             user=user,
             vehicle_id=vehicle_id,
             charger_id=charger_id,
+            target_soc=target_soc,
+        )
+
+    @staticmethod
+    def estimate_charging_cost(
+        db: Session,
+        user: User,
+        vehicle_id: int,
+        station_id: int,
+        target_soc: int = 80,
+    ) -> ChargingCostEstimateResponse:
+        """Estimate charging cost using the selected station's tariff."""
+        return domain_estimate_charging_cost(
+            db=db,
+            user=user,
+            vehicle_id=vehicle_id,
+            station_id=station_id,
             target_soc=target_soc,
         )

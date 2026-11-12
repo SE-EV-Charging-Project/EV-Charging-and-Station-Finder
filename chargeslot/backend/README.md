@@ -4,7 +4,7 @@ FastAPI backend for **ChargeSlot — EV Charging Station Finder with Slot Dashbo
 
 ## Feature Overview: Battery Input and Charging Estimates (CS19-055 / CS19-056 / CS19-061)
 
-Allows authenticated EV drivers to enter their vehicle's battery level as an integer percentage (0 to 100%) and estimate charging time from the saved SoC, target SoC, battery capacity, and effective charger power. Integrates with driving range calculations, energy estimates, and low-battery triggers.
+Allows authenticated EV drivers to enter their vehicle's battery level as an integer percentage (0 to 100%) and estimate charging time and cost from the saved SoC, target SoC, battery capacity, effective charger power, and station tariff. Charging-time estimates include the 15-minute slot duration rounded up from the calculated charging time.
 
 ### Requirements & Traceability
 - **Story ID:** CS19-055
@@ -104,6 +104,22 @@ The vehicle must belong to the authenticated driver and have a saved battery lev
 Battery-level and target percentages are integer values from 0 to 100; fractional values are rejected.
 
 Estimated minutes = energy required (kWh) / effective charging power (kW) × 60.
+
+The response includes `slot_length_minutes`, rounded up to the next 15-minute boundary (for example, 54 minutes requires a 60-minute slot; 0 minutes remains 0).
+
+### Charging Cost Estimate (REQ-F3-09 / CS19-063)
+- **Method:** `POST`
+- **Path:** `/api/v1/bookings/cost-estimate`
+- **Auth:** Bearer Token (Driver or Admin)
+- **Request Body:**
+```json
+{
+  "vehicle_id": 1,
+  "station_id": 2,
+  "target_soc": 80
+}
+```
+The vehicle must belong to the authenticated driver and have a saved battery level. Cost is estimated as energy required in kWh multiplied by the station's configured `price_per_kwh`, rounded to two decimal places. The response currency is INR. A station without a configured tariff returns `409 Conflict`.
 
 ## Running Tests
 

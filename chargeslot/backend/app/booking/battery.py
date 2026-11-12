@@ -10,10 +10,12 @@ from sqlalchemy.orm import Session
 
 from app.booking.validators import validate_battery_level_input
 from app.models.charger import Charger, CurrentType
+from app.models.station import Station
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
 from app.schemas.booking import (
     BatteryLevelResponse,
+    ChargingCostEstimateResponse,
     ChargingTimeEstimateResponse,
 )
 from app.services.audit_service import AuditService
@@ -94,6 +96,56 @@ def compute_charging_time_minutes(
             detail="Effective charging power must be a finite value greater than zero.",
         )
     return round(energy_value / power_value * 60.0, 1)
+
+
+def compute_slot_length_minutes(estimated_charging_time_minutes: float) -> int:
+    """Round a non-negative estimate up to the next 15-minute slot boundary."""
+    if isinstance(estimated_charging_time_minutes, bool):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Estimated charging time must be numeric.",
+        )
+    try:
+        time_value = float(estimated_charging_time_minutes)
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Estimated charging time must be numeric.",
+        )
+    if not math.isfinite(time_value) or time_value < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Estimated charging time must be a finite, non-negative value.",
+        )
+    return int(math.ceil(time_value / 15.0) * 15)
+
+
+def compute_charging_cost(energy_required_kwh: float, price_per_kwh: float) -> float:
+    """Calculate the estimated charging cost using a station's per-kWh tariff."""
+    if isinstance(energy_required_kwh, bool) or isinstance(price_per_kwh, bool):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Energy required and price per kWh must be numeric.",
+        )
+    try:
+        energy_value = float(energy_required_kwh)
+        price_value = float(price_per_kwh)
+    except (TypeError, ValueError, OverflowError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Energy required and price per kWh must be numeric.",
+        )
+    if not math.isfinite(energy_value) or energy_value < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Energy required must be a finite, non-negative value.",
+        )
+    if not math.isfinite(price_value) or price_value < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Price per kWh must be a finite, non-negative value.",
+        )
+    return round(energy_value * price_value, 2)
 
 
 def get_target_vehicle(
@@ -193,6 +245,7 @@ def estimate_charging_time(
         energy_required_kwh=energy_required_kwh,
         effective_charging_power_kw=effective_power_kw,
     )
+    slot_length_minutes = compute_slot_length_minutes(charging_time_minutes)
     return ChargingTimeEstimateResponse(
         vehicle_id=vehicle.id,
         charger_id=charger.id,
@@ -201,7 +254,60 @@ def estimate_charging_time(
         energy_required_kwh=energy_required_kwh,
         effective_charging_power_kw=effective_power_kw,
         estimated_charging_time_minutes=charging_time_minutes,
+        slot_length_minutes=slot_length_minutes,
         message="Charging time estimate calculated successfully.",
+    )
+
+
+def estimate_charging_cost(
+    db: Session,
+    user: User,
+    vehicle_id: int,
+    station_id: int,
+    target_soc: int = 80,
+) -> ChargingCostEstimateResponse:
+    """Estimate charging cost using an owned vehicle and station tariff."""
+    vehicle = get_target_vehicle(db=db, user=user, vehicle_id=vehicle_id)
+    if vehicle.current_soc is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Enter the vehicle's current battery level before requesting a cost estimate.",
+        )
+    _, validated_target = validate_battery_level_input(
+        battery_level=vehicle.current_soc,
+        target_soc=target_soc,
+    )
+
+    station = db.query(Station).filter(Station.id == station_id).first()
+    if station is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Station with ID {station_id} not found.",
+        )
+    if station.price_per_kwh is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Station tariff is not configured; charging cost cannot be estimated.",
+        )
+
+    energy_required_kwh = compute_energy_required(
+        battery_kwh=vehicle.battery_kwh,
+        current_soc=vehicle.current_soc,
+        target_soc=validated_target,
+    )
+    estimated_cost = compute_charging_cost(
+        energy_required_kwh=energy_required_kwh,
+        price_per_kwh=station.price_per_kwh,
+    )
+    return ChargingCostEstimateResponse(
+        vehicle_id=vehicle.id,
+        station_id=station.id,
+        current_soc=vehicle.current_soc,
+        target_soc=validated_target,
+        energy_required_kwh=energy_required_kwh,
+        price_per_kwh=station.price_per_kwh,
+        estimated_cost=estimated_cost,
+        message="Charging cost estimate calculated successfully.",
     )
 
 

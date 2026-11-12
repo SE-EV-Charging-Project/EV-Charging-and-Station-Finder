@@ -1,8 +1,8 @@
 """
 Unit and Integration Tests for Vehicle Battery Level Input.
-Requirements: REQ-F3-01, REQ-F3-02, REQ-F3-07
-Stories: CS19-055, CS19-056, CS19-061
-Test Case IDs: TC-F3-01, TC-F3-02, TC-F3-07
+Requirements: REQ-F3-01, REQ-F3-02, REQ-F3-07, REQ-F3-08, REQ-F3-09
+Stories: CS19-055, CS19-056, CS19-061, CS19-062, CS19-063
+Test Case IDs: TC-F3-01, TC-F3-02, TC-F3-07, TC-F3-08, TC-F3-09
 System Test Case ID: STC-F3-01
 """
 
@@ -13,7 +13,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.booking.battery import (
+    compute_charging_cost,
     compute_charging_time_minutes,
+    compute_slot_length_minutes,
     compute_usable_range,
     compute_estimated_range,
     compute_energy_required,
@@ -249,7 +251,7 @@ def test_tc_f3_01_validation_rules_and_boundary_checks():
 
 
 @pytest.fixture
-def alice_charger(db_session: Session, driver_alice: User) -> Charger:
+def alice_station(db_session: Session, driver_alice: User) -> Station:
     station = Station(
         operator_id=driver_alice.id,
         name="Estimate Test Station",
@@ -257,12 +259,18 @@ def alice_charger(db_session: Session, driver_alice: User) -> Charger:
         latitude=12.9716,
         longitude=77.5946,
         contact_phone="+919876543205",
+        price_per_kwh=8.5,
     )
     db_session.add(station)
     db_session.commit()
     db_session.refresh(station)
+    return station
+
+
+@pytest.fixture
+def alice_charger(db_session: Session, alice_station: Station) -> Charger:
     charger = Charger(
-        station_id=station.id,
+        station_id=alice_station.id,
         power_kw=30.0,
         current_type=CurrentType.DC,
         gateway_id="estimate-test-gateway",
@@ -306,6 +314,28 @@ def test_tc_f3_07_charging_time_calculation_validates_power_and_energy():
         compute_charging_time_minutes(float("nan"), 30.0)
 
 
+def test_tc_f3_08_slot_length_rounds_up_to_15_minute_boundaries():
+    assert compute_slot_length_minutes(0) == 0
+    assert compute_slot_length_minutes(1) == 15
+    assert compute_slot_length_minutes(15) == 15
+    assert compute_slot_length_minutes(15.1) == 30
+    assert compute_slot_length_minutes(54) == 60
+
+    for invalid_time in (-1, float("nan"), float("inf"), True):
+        with pytest.raises(HTTPException):
+            compute_slot_length_minutes(invalid_time)
+
+
+def test_tc_f3_09_charging_cost_uses_energy_and_station_tariff():
+    assert compute_charging_cost(27.0, 8.5) == 229.5
+    assert compute_charging_cost(0.0, 8.5) == 0.0
+    for invalid_value in (-1, float("nan"), float("inf"), True):
+        with pytest.raises(HTTPException):
+            compute_charging_cost(invalid_value, 8.5)
+        with pytest.raises(HTTPException):
+            compute_charging_cost(27.0, invalid_value)
+
+
 def test_tc_f3_07_charging_time_uses_effective_vehicle_and_charger_power(
     client: TestClient,
     db_session: Session,
@@ -335,6 +365,7 @@ def test_tc_f3_07_charging_time_uses_effective_vehicle_and_charger_power(
         "energy_required_kwh": 27.0,
         "effective_charging_power_kw": 30.0,
         "estimated_charging_time_minutes": 54.0,
+        "slot_length_minutes": 60,
         "message": "Charging time estimate calculated successfully.",
     }
 
@@ -352,6 +383,7 @@ def test_tc_f3_07_charging_time_uses_effective_vehicle_and_charger_power(
     assert vehicle_limited_response.status_code == 200
     assert vehicle_limited_response.json()["effective_charging_power_kw"] == 50.0
     assert vehicle_limited_response.json()["estimated_charging_time_minutes"] == 32.4
+    assert vehicle_limited_response.json()["slot_length_minutes"] == 45
 
     alice_charger.current_type = CurrentType.AC
     alice_charger.power_kw = 22.0
@@ -368,6 +400,83 @@ def test_tc_f3_07_charging_time_uses_effective_vehicle_and_charger_power(
     assert ac_response.status_code == 200
     assert ac_response.json()["effective_charging_power_kw"] == 7.2
     assert ac_response.json()["estimated_charging_time_minutes"] == 225.0
+    assert ac_response.json()["slot_length_minutes"] == 225
+
+
+def test_tc_f3_09_cost_estimate_uses_station_tariff_and_checks_ownership(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+    alice_station: Station,
+    bob_vehicle: Vehicle,
+):
+    alice_vehicle.current_soc = 20
+    db_session.commit()
+    headers = {"Authorization": f"Bearer {make_token(driver_alice)}"}
+    payload = {
+        "vehicle_id": alice_vehicle.id,
+        "station_id": alice_station.id,
+        "target_soc": 80,
+    }
+
+    response = client.post(
+        "/api/v1/bookings/cost-estimate",
+        json=payload,
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "vehicle_id": alice_vehicle.id,
+        "station_id": alice_station.id,
+        "current_soc": 20,
+        "target_soc": 80,
+        "energy_required_kwh": 27.0,
+        "price_per_kwh": 8.5,
+        "estimated_cost": 229.5,
+        "currency": "INR",
+        "message": "Charging cost estimate calculated successfully.",
+    }
+
+    foreign_vehicle_response = client.post(
+        "/api/v1/bookings/cost-estimate",
+        json={**payload, "vehicle_id": bob_vehicle.id},
+        headers=headers,
+    )
+    assert foreign_vehicle_response.status_code == 403
+
+    missing_station_response = client.post(
+        "/api/v1/bookings/cost-estimate",
+        json={**payload, "station_id": 999999},
+        headers=headers,
+    )
+    assert missing_station_response.status_code == 404
+
+    invalid_target_response = client.post(
+        "/api/v1/bookings/cost-estimate",
+        json={**payload, "target_soc": 101},
+        headers=headers,
+    )
+    assert invalid_target_response.status_code == 422
+
+    alice_vehicle.current_soc = None
+    db_session.commit()
+    missing_soc_response = client.post(
+        "/api/v1/bookings/cost-estimate",
+        json=payload,
+        headers=headers,
+    )
+    assert missing_soc_response.status_code == 422
+
+    alice_vehicle.current_soc = 20
+    alice_station.price_per_kwh = None
+    db_session.commit()
+    missing_tariff_response = client.post(
+        "/api/v1/bookings/cost-estimate",
+        json=payload,
+        headers=headers,
+    )
+    assert missing_tariff_response.status_code == 409
 
 
 def test_tc_f3_07_charging_time_requires_owned_vehicle_and_saved_battery_level(
