@@ -2,9 +2,9 @@
 
 FastAPI backend for **ChargeSlot — EV Charging Station Finder with Slot Dashboard and Auto-Booking System**.
 
-## Feature Overview: Vehicle Battery Level Input (CS19-055 / REQ-F3-01)
+## Feature Overview: Battery Input and Charging Estimates (CS19-055 / CS19-056 / CS19-061)
 
-Allows authenticated EV drivers to enter and dynamically update their current vehicle battery level (State of Charge / SoC) as a percentage (0% to 100%). Integrates with driving range calculations, energy estimates, and low-battery triggers.
+Allows authenticated EV drivers to enter their vehicle's battery level as an integer percentage (0 to 100%) and estimate charging time from the saved SoC, target SoC, battery capacity, and effective charger power. Integrates with driving range calculations, energy estimates, and low-battery triggers.
 
 ### Requirements & Traceability
 - **Story ID:** CS19-055
@@ -86,6 +86,24 @@ Allows authenticated EV drivers to enter and dynamically update their current ve
    $$\text{is\_low\_battery} = \text{Current SoC} \le \text{low\_battery\_threshold (default 20\%)}$$
 
 ---
+
+### Charging Time Estimate (REQ-F3-07 / CS19-061)
+- **Method:** `POST`
+- **Path:** `/api/v1/bookings/charging-time-estimate`
+- **Auth:** Bearer Token (Driver or Admin)
+- **Request Body:**
+```json
+{
+  "vehicle_id": 1,
+  "charger_id": 2,
+  "target_soc": 80
+}
+```
+The vehicle must belong to the authenticated driver and have a saved battery level. The estimate uses energy required to reach the target SoC and the lower of the vehicle's AC/DC limit and the charger's rated power.
+
+Battery-level and target percentages are integer values from 0 to 100; fractional values are rejected.
+
+Estimated minutes = energy required (kWh) / effective charging power (kW) × 60.
 
 ## Running Tests
 

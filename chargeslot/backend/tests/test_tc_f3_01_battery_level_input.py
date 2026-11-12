@@ -1,17 +1,19 @@
 """
 Unit and Integration Tests for Vehicle Battery Level Input.
-Requirement: REQ-F3-01
-Story ID: CS19-055
-Test Case ID: TC-F3-01
+Requirements: REQ-F3-01, REQ-F3-02, REQ-F3-07
+Stories: CS19-055, CS19-056, CS19-061
+Test Case IDs: TC-F3-01, TC-F3-02, TC-F3-07
 System Test Case ID: STC-F3-01
 """
 
 from datetime import datetime, timezone
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.booking.battery import (
+    compute_charging_time_minutes,
     compute_usable_range,
     compute_estimated_range,
     compute_energy_required,
@@ -22,6 +24,8 @@ from app.booking.validators import validate_battery_level_input, get_battery_rul
 from app.models.audit import AuditLog
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle, ConnectorType
+from app.models.charger import Charger, CurrentType
+from app.models.station import Station
 from app.services.booking_service import BookingService
 from app.services.vehicle_service import VehicleService
 from app.utils.security import hash_password, create_access_token
@@ -218,9 +222,10 @@ def test_tc_f3_01_validation_rules_and_boundary_checks():
     soc100, _ = validate_battery_level_input(100)
     assert soc100 == 100
 
-    # Float rounding
-    soc_float, _ = validate_battery_level_input(45.6)
-    assert soc_float == 46
+    # Fractional percentages are invalid because SoC is an integer percentage.
+    with pytest.raises(Exception) as exc_float:
+        validate_battery_level_input(45.6)
+    assert "integer" in str(exc_float.value).lower()
 
     # Out of range: < 0
     with pytest.raises(Exception) as exc:
@@ -241,6 +246,166 @@ def test_tc_f3_01_validation_rules_and_boundary_checks():
     with pytest.raises(Exception) as exc4:
         validate_battery_level_input("full")
     assert "numeric" in str(exc4.value).lower()
+
+
+@pytest.fixture
+def alice_charger(db_session: Session, driver_alice: User) -> Charger:
+    station = Station(
+        operator_id=driver_alice.id,
+        name="Estimate Test Station",
+        address="1 Test Road",
+        latitude=12.9716,
+        longitude=77.5946,
+        contact_phone="+919876543205",
+    )
+    db_session.add(station)
+    db_session.commit()
+    db_session.refresh(station)
+    charger = Charger(
+        station_id=station.id,
+        power_kw=30.0,
+        current_type=CurrentType.DC,
+        gateway_id="estimate-test-gateway",
+    )
+    db_session.add(charger)
+    db_session.commit()
+    db_session.refresh(charger)
+    return charger
+
+
+def test_tc_f3_02_rejects_fractional_battery_and_target_percentages(
+    client: TestClient, driver_alice: User, alice_vehicle: Vehicle
+):
+    token = make_token(driver_alice)
+    headers = {"Authorization": f"Bearer {token}"}
+    for payload in (
+        {"vehicle_id": alice_vehicle.id, "battery_level": 45.6},
+        {"vehicle_id": alice_vehicle.id, "battery_level": 45, "target_soc": 80.5},
+    ):
+        response = client.post(
+            "/api/v1/bookings/battery-level-input",
+            json=payload,
+            headers=headers,
+        )
+        assert response.status_code == 422
+    assert alice_vehicle.current_soc is None
+
+
+def test_tc_f3_02_rejects_non_finite_and_boolean_battery_percentages():
+    for value in (True, float("nan"), float("inf")):
+        with pytest.raises(HTTPException):
+            validate_battery_level_input(value)
+
+
+def test_tc_f3_07_charging_time_calculation_validates_power_and_energy():
+    assert compute_charging_time_minutes(27.0, 30.0) == 54.0
+    assert compute_charging_time_minutes(0.0, 30.0) == 0.0
+    with pytest.raises(HTTPException):
+        compute_charging_time_minutes(1.0, 0.0)
+    with pytest.raises(HTTPException):
+        compute_charging_time_minutes(float("nan"), 30.0)
+
+
+def test_tc_f3_07_charging_time_uses_effective_vehicle_and_charger_power(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+    alice_charger: Charger,
+):
+    alice_vehicle.current_soc = 20
+    db_session.commit()
+
+    response = client.post(
+        "/api/v1/bookings/charging-time-estimate",
+        json={
+            "vehicle_id": alice_vehicle.id,
+            "charger_id": alice_charger.id,
+            "target_soc": 80,
+        },
+        headers={"Authorization": f"Bearer {make_token(driver_alice)}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "vehicle_id": alice_vehicle.id,
+        "charger_id": alice_charger.id,
+        "current_soc": 20,
+        "target_soc": 80,
+        "energy_required_kwh": 27.0,
+        "effective_charging_power_kw": 30.0,
+        "estimated_charging_time_minutes": 54.0,
+        "message": "Charging time estimate calculated successfully.",
+    }
+
+    alice_charger.power_kw = 100.0
+    db_session.commit()
+    vehicle_limited_response = client.post(
+        "/api/v1/bookings/charging-time-estimate",
+        json={
+            "vehicle_id": alice_vehicle.id,
+            "charger_id": alice_charger.id,
+            "target_soc": 80,
+        },
+        headers={"Authorization": f"Bearer {make_token(driver_alice)}"},
+    )
+    assert vehicle_limited_response.status_code == 200
+    assert vehicle_limited_response.json()["effective_charging_power_kw"] == 50.0
+    assert vehicle_limited_response.json()["estimated_charging_time_minutes"] == 32.4
+
+    alice_charger.current_type = CurrentType.AC
+    alice_charger.power_kw = 22.0
+    db_session.commit()
+    ac_response = client.post(
+        "/api/v1/bookings/charging-time-estimate",
+        json={
+            "vehicle_id": alice_vehicle.id,
+            "charger_id": alice_charger.id,
+            "target_soc": 80,
+        },
+        headers={"Authorization": f"Bearer {make_token(driver_alice)}"},
+    )
+    assert ac_response.status_code == 200
+    assert ac_response.json()["effective_charging_power_kw"] == 7.2
+    assert ac_response.json()["estimated_charging_time_minutes"] == 225.0
+
+
+def test_tc_f3_07_charging_time_requires_owned_vehicle_and_saved_battery_level(
+    client: TestClient,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+    driver_bob: User,
+    bob_vehicle: Vehicle,
+    alice_charger: Charger,
+):
+    headers = {"Authorization": f"Bearer {make_token(driver_alice)}"}
+    foreign_vehicle_response = client.post(
+        "/api/v1/bookings/charging-time-estimate",
+        json={"vehicle_id": bob_vehicle.id, "charger_id": alice_charger.id},
+        headers=headers,
+    )
+    assert foreign_vehicle_response.status_code == 403
+
+    missing_soc_response = client.post(
+        "/api/v1/bookings/charging-time-estimate",
+        json={"vehicle_id": alice_vehicle.id, "charger_id": alice_charger.id},
+        headers=headers,
+    )
+    assert missing_soc_response.status_code == 422
+
+
+def test_tc_f3_07_charging_time_rejects_missing_charger(
+    client: TestClient,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+):
+    alice_vehicle.current_soc = 20
+    response = client.post(
+        "/api/v1/bookings/charging-time-estimate",
+        json={"vehicle_id": alice_vehicle.id, "charger_id": 999999},
+        headers={"Authorization": f"Bearer {make_token(driver_alice)}"},
+    )
+    assert response.status_code == 404
 
 
 # =========================================================================
