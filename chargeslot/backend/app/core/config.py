@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     LOGIN_MAX_FAILED_ATTEMPTS: int = 5          # Lockout after 5 attempts (CS19-005)
     LOGIN_LOCKOUT_MINUTES: int = 15             # 15 minutes lockout duration (CS19-005)
     PASSWORD_RESET_EXPIRE_MINUTES: int = 15     # 15 minutes reset code expiry (CS19-006)
+    GATEWAY_WEBHOOK_SECRET: str = "dev_ocpp_gateway_secret_change_in_production"
+    GATEWAY_STALE_STATUS_LIMIT_SECONDS: int = 120
     DATABASE_URL: str = "sqlite:///./chargeslot.db"
 
     model_config = SettingsConfigDict(
