@@ -70,6 +70,7 @@ class NearbyStationItem(BaseModel):
     available_connectors: int = 0
     connector_types: list[str] = Field(default_factory=list)
     max_power_kw: float | None = None
+    price_per_kwh: float | None = Field(default=None, description="Tariff price per kWh in INR (REQ-F2-10)")
     color_code: str | None = Field(default=None, description="Marker colour: green, amber, red, grey (REQ-F2-08)")
     status_label: str | None = Field(default=None, description="Accessibility text label e.g. Available, Occupied")
     badge_text: str | None = Field(default=None, description="Badge text e.g. '3/4 Available'")
@@ -181,6 +182,8 @@ class StationFilterRequest(BaseModel):
     )
     limit: int = Field(default=50, ge=1, le=100)
     offset: int = Field(default=0, ge=0)
+    sort_by: str | None = Field(default=None, description="Sort criteria: distance, price, power, availability (REQ-F2-10)")
+    sort_order: str | None = Field(default=None, description="Sort direction: 'asc' or 'desc'")
 
 
 class StationFilterResponse(BaseModel):
@@ -189,6 +192,72 @@ class StationFilterResponse(BaseModel):
     """
     total: int
     applied_filters: dict = Field(default_factory=dict)
+    stations: list[NearbyStationItem]
+
+
+class StationSortBy(str, enum.Enum):
+    """
+    Supported station sorting criteria (REQ-F2-10 / CS19-036).
+    """
+    DISTANCE = "distance"
+    PRICE = "price"
+    POWER = "power"
+    AVAILABILITY = "availability"
+
+
+class SortOrder(str, enum.Enum):
+    """
+    Sort order direction: ascending or descending.
+    """
+    ASC = "asc"
+    DESC = "desc"
+
+
+class StationSortRequest(BaseModel):
+    """
+    Request payload for sorting stations by distance, price, power, or availability (REQ-F2-10 / CS19-036).
+    """
+    sort_by: StationSortBy = Field(
+        default=StationSortBy.DISTANCE,
+        description="Sort criteria: distance, price, power, availability (REQ-F2-10)",
+    )
+    sort_order: SortOrder | None = Field(
+        default=None,
+        description="Sort direction: 'asc' or 'desc'. Defaults per criteria (distance/price: asc, power/availability: desc)",
+    )
+    latitude: float | None = Field(
+        default=None,
+        ge=-90.0,
+        le=90.0,
+        description="Driver latitude coordinate [-90.0, 90.0]",
+    )
+    longitude: float | None = Field(
+        default=None,
+        ge=-180.0,
+        le=180.0,
+        description="Driver longitude coordinate [-180.0, 180.0]",
+    )
+    radius_km: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=50.0,
+        description="Search radius in kilometers [1.0, 50.0]",
+    )
+    station_ids: list[int] | None = Field(
+        default=None,
+        description="Optional explicit station IDs to sort",
+    )
+    limit: int = Field(default=50, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+
+
+class StationSortResponse(BaseModel):
+    """
+    Structured sorted station response (REQ-F2-10 / CS19-036).
+    """
+    total: int
+    sort_by: str
+    sort_order: str
     stations: list[NearbyStationItem]
 
 

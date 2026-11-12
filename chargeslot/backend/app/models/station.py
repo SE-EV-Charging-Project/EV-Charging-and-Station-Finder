@@ -38,6 +38,7 @@ class Station(Base):
     operating_hours: Mapped[str] = mapped_column(String(100), default="24 hours", nullable=False)
     contact_phone: Mapped[str] = mapped_column(String(20), nullable=False)
     contact_email: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    price_per_kwh: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
 
     status: Mapped[StationStatus] = mapped_column(
         Enum(StationStatus, name="station_status_enum", native_enum=False),

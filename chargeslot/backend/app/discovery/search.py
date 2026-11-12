@@ -163,6 +163,7 @@ def search_nearby_stations(
                 available_connectors=av,
                 connector_types=connector_types,
                 max_power_kw=max_power,
+                price_per_kwh=getattr(station, "price_per_kwh", None),
                 color_code=c_code,
                 status_label=s_label,
                 badge_text=b_text,

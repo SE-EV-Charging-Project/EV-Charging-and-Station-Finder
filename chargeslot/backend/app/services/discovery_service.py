@@ -6,6 +6,9 @@ from app.schemas.discovery import (
     StationAvailabilityMarkersResponse,
     StationAvailabilityMarker,
     StationFilterResponse,
+    StationSortResponse,
+    StationSortBy,
+    SortOrder,
 )
 from app.discovery.search import (
     search_nearby_stations,
@@ -13,6 +16,7 @@ from app.discovery.search import (
 )
 from app.discovery.views import get_station_markers
 from app.discovery.filters import apply_station_filters
+from app.discovery.sorting import search_and_sort_stations
 
 
 class DiscoveryService:
@@ -92,6 +96,8 @@ class DiscoveryService:
         latitude: float | None = None,
         longitude: float | None = None,
         radius_km: float = DEFAULT_SEARCH_RADIUS_KM,
+        sort_by: str | None = None,
+        sort_order: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> StationFilterResponse:
@@ -110,6 +116,8 @@ class DiscoveryService:
             latitude=latitude,
             longitude=longitude,
             radius_km=radius_km,
+            sort_by=sort_by,
+            sort_order=sort_order,
             limit=limit,
             offset=offset,
         )
@@ -117,6 +125,42 @@ class DiscoveryService:
         return StationFilterResponse(
             total=total,
             applied_filters=applied,
+            stations=stations,
+        )
+
+    @staticmethod
+    def sort_stations(
+        db: Session,
+        user: User | None = None,
+        sort_by: str | StationSortBy = StationSortBy.DISTANCE,
+        sort_order: str | SortOrder | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        radius_km: float = DEFAULT_SEARCH_RADIUS_KM,
+        station_ids: list[int] | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> StationSortResponse:
+        """
+        Sorts stations by distance, price, power, or availability (REQ-F2-10 / CS19-036).
+        """
+        total, applied_sort_by, applied_sort_order, stations = search_and_sort_stations(
+            db=db,
+            user=user,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            latitude=latitude,
+            longitude=longitude,
+            radius_km=radius_km,
+            station_ids=station_ids,
+            limit=limit,
+            offset=offset,
+        )
+
+        return StationSortResponse(
+            total=total,
+            sort_by=applied_sort_by,
+            sort_order=applied_sort_order,
             stations=stations,
         )
 

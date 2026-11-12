@@ -12,6 +12,10 @@ from app.schemas.discovery import (
     BatchAvailabilityMarkersRequest,
     StationFilterRequest,
     StationFilterResponse,
+    StationSortRequest,
+    StationSortResponse,
+    StationSortBy,
+    SortOrder,
 )
 from app.services.discovery_service import DiscoveryService
 
@@ -202,6 +206,8 @@ def get_filter_stations(
     latitude: float | None = Query(default=None, ge=-90.0, le=90.0, description="Center latitude"),
     longitude: float | None = Query(default=None, ge=-180.0, le=180.0, description="Center longitude"),
     radius_km: float = Query(default=10.0, ge=1.0, le=50.0, description="Radius in km [1.0, 50.0]"),
+    sort_by: str | None = Query(default=None, description="Sort criteria: distance, price, power, availability (REQ-F2-10)"),
+    sort_order: str | None = Query(default=None, description="Sort direction: 'asc' or 'desc'"),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     current_user: User = Depends(get_current_user),
@@ -219,6 +225,8 @@ def get_filter_stations(
         latitude=latitude,
         longitude=longitude,
         radius_km=radius_km,
+        sort_by=sort_by,
+        sort_order=sort_order,
         limit=limit,
         offset=offset,
     )
@@ -248,6 +256,93 @@ def post_filter_stations(
         latitude=payload.latitude,
         longitude=payload.longitude,
         radius_km=payload.radius_km,
+        sort_by=payload.sort_by,
+        sort_order=payload.sort_order,
+        limit=payload.limit,
+        offset=payload.offset,
+    )
+
+
+# =========================================================================
+# Station Sorting Endpoints (REQ-F2-10 / CS19-036 / Architecture Doc Page 6)
+# =========================================================================
+
+@router.get(
+    "/stations/sort-stations",
+    response_model=StationSortResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Sort stations (SW Architecture Route)",
+    description=(
+        "Sorts charging stations by distance, price, power, or availability (REQ-F2-10 / CS19-036). "
+        "Allows ascending or descending ordering with intelligent defaults."
+    ),
+)
+def get_sort_stations(
+    sort_by: str = Query(
+        default="distance",
+        description="Sort criteria: distance, price, power, availability (REQ-F2-10)",
+    ),
+    sort_order: str | None = Query(
+        default=None,
+        description="Sort direction: 'asc' or 'desc'. Defaults: distance/price: asc, power/availability: desc",
+    ),
+    latitude: float | None = Query(
+        default=None,
+        ge=-90.0,
+        le=90.0,
+        description="Driver latitude coordinate [-90.0, 90.0]",
+    ),
+    longitude: float | None = Query(
+        default=None,
+        ge=-180.0,
+        le=180.0,
+        description="Driver longitude coordinate [-180.0, 180.0]",
+    ),
+    radius_km: float = Query(
+        default=10.0,
+        ge=1.0,
+        le=50.0,
+        description="Search radius in kilometers [1.0, 50.0]",
+    ),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationSortResponse:
+    return DiscoveryService.sort_stations(
+        db=db,
+        user=current_user,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/stations/sort-stations",
+    response_model=StationSortResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Sort stations with JSON payload",
+    description="POST alternative to sort stations by distance, price, power, or availability (REQ-F2-10).",
+)
+def post_sort_stations(
+    payload: StationSortRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationSortResponse:
+    return DiscoveryService.sort_stations(
+        db=db,
+        user=current_user,
+        sort_by=payload.sort_by,
+        sort_order=payload.sort_order,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        radius_km=payload.radius_km,
+        station_ids=payload.station_ids,
         limit=payload.limit,
         offset=payload.offset,
     )
