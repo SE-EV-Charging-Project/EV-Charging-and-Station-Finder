@@ -13,6 +13,8 @@ from app.schemas.discovery import (
     ClusteredMapViewResponse,
     PaginatedStationListResponse,
     StationDetailResponse,
+    FavouriteStationActionResponse,
+    FavouriteStationListResponse,
 )
 from app.discovery.search import (
     search_nearby_stations,
@@ -27,6 +29,11 @@ from app.discovery.clustering import (
     paginate_items,
     DEFAULT_PAGE_SIZE,
     CLUSTERING_THRESHOLD,
+)
+from app.discovery.favourites import (
+    save_favourite_station,
+    remove_favourite_station,
+    list_favourite_stations,
 )
 
 
@@ -290,6 +297,61 @@ class DiscoveryService:
         return get_station_detail(
             db=db,
             station_id=station_id,
+            user=user,
+            latitude=latitude,
+            longitude=longitude,
+        )
+
+    @staticmethod
+    def save_favourite_station(
+        db: Session,
+        user: User,
+        station_id: int,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        ip_address: str | None = None,
+    ) -> FavouriteStationActionResponse:
+        """
+        Save a charging station as a driver favourite (REQ-F2-14).
+        """
+        return save_favourite_station(
+            db=db,
+            user=user,
+            station_id=station_id,
+            latitude=latitude,
+            longitude=longitude,
+            ip_address=ip_address,
+        )
+
+    @staticmethod
+    def remove_favourite_station(
+        db: Session,
+        user: User,
+        station_id: int,
+        ip_address: str | None = None,
+    ) -> FavouriteStationActionResponse:
+        """
+        Remove a charging station from the driver's favourites (REQ-F2-14).
+        """
+        return remove_favourite_station(
+            db=db,
+            user=user,
+            station_id=station_id,
+            ip_address=ip_address,
+        )
+
+    @staticmethod
+    def list_favourite_stations(
+        db: Session,
+        user: User,
+        latitude: float | None = None,
+        longitude: float | None = None,
+    ) -> FavouriteStationListResponse:
+        """
+        List all approved, active favourite stations saved by the driver (REQ-F2-14).
+        """
+        return list_favourite_stations(
+            db=db,
             user=user,
             latitude=latitude,
             longitude=longitude,

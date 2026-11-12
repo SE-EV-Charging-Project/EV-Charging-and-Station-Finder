@@ -37,6 +37,13 @@ from app.discovery.clustering import (
     DEFAULT_PAGE_SIZE,
     CLUSTERING_THRESHOLD,
 )
+from app.discovery.favourites import (
+    validate_favourite_params,
+    build_favourite_station_item,
+    save_favourite_station,
+    remove_favourite_station,
+    list_favourite_stations,
+)
 
 __all__ = [
     "haversine_distance",
@@ -68,5 +75,10 @@ __all__ = [
     "get_clustered_map_view",
     "DEFAULT_PAGE_SIZE",
     "CLUSTERING_THRESHOLD",
+    "validate_favourite_params",
+    "build_favourite_station_item",
+    "save_favourite_station",
+    "remove_favourite_station",
+    "list_favourite_stations",
 ]
 

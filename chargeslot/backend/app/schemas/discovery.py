@@ -427,5 +427,57 @@ class StationDetailResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class FavouriteStationRequest(BaseModel):
+    """
+    Request payload for saving a charging station as a driver favourite (REQ-F2-14).
+    """
+
+    station_id: int = Field(..., gt=0, description="ID of the station to save as favourite")
+
+
+class FavouriteStationItem(BaseModel):
+    """
+    Saved favourite station summary displayed in the driver's favourites list (REQ-F2-14).
+    """
+
+    station_id: int
+    name: str
+    address: str
+    latitude: float
+    longitude: float
+    distance_km: float | None = None
+    operating_hours: str | None = None
+    amenities: list[str] = Field(default_factory=list)
+    price_per_kwh: float | None = None
+    average_rating: float | None = None
+    total_reviews: int = 0
+    status: str
+    is_active: bool
+    availability_marker: StationAvailabilityMarker
+    favourited_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FavouriteStationActionResponse(BaseModel):
+    """
+    Confirmation payload after saving or removing a favourite station (REQ-F2-14).
+    """
+
+    message: str
+    station_id: int
+    is_favourite: bool
+    favourite: FavouriteStationItem | None = None
+
+
+class FavouriteStationListResponse(BaseModel):
+    """
+    List of favourite charging stations saved by the driver (REQ-F2-14).
+    """
+
+    total: int
+    stations: list[FavouriteStationItem] = Field(default_factory=list)
+
+
 
 
