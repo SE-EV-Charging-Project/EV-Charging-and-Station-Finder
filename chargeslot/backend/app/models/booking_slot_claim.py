@@ -16,6 +16,11 @@ class BookingSlotClaim(Base):
             "slot_start_time",
             name="uq_booking_slot_claim_charger_start",
         ),
+        UniqueConstraint(
+            "vehicle_id",
+            "slot_start_time",
+            name="uq_booking_slot_claim_vehicle_start",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -28,6 +33,12 @@ class BookingSlotClaim(Base):
     slot_start_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+    )
+    vehicle_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("vehicles.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
     )
     booking_id: Mapped[int] = mapped_column(
         Integer,

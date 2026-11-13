@@ -183,6 +183,7 @@ def _slot_claims_for_booking(booking: Booking) -> list[BookingSlotClaim]:
             BookingSlotClaim(
                 charger_id=booking.charger_id,
                 slot_start_time=slot_start,
+                vehicle_id=booking.vehicle_id,
                 booking_id=booking.id,
             )
         )
@@ -281,6 +282,21 @@ def _candidate_slots(
         )
         .all()
     )
+    vehicle_bookings = (
+        db.query(Booking)
+        .filter(
+            Booking.vehicle_id == vehicle.id,
+            Booking.status.in_(ACTIVE_BOOKING_STATUSES),
+            or_(
+                Booking.status != BookingStatus.HELD,
+                Booking.hold_expires_at.is_(None),
+                Booking.hold_expires_at > now_utc,
+            ),
+            Booking.start_time < day_end,
+            Booking.end_time > day_start,
+        )
+        .all()
+    )
     bookings_by_station: dict[int, list[Booking]] = {}
     for booking in bookings:
         if booking.station_id is not None:
@@ -336,7 +352,16 @@ def _candidate_slots(
                         end_time=slot_end,
                         bookings=bookings_by_station.get(station.id, []),
                     )
-                    if not overlaps_maintenance and not overlaps_booking:
+                    overlaps_vehicle_booking = any(
+                        max(candidate_start, ensure_utc(booking.start_time))
+                        < min(slot_end, ensure_utc(booking.end_time))
+                        for booking in vehicle_bookings
+                    )
+                    if (
+                        not overlaps_maintenance
+                        and not overlaps_booking
+                        and not overlaps_vehicle_booking
+                    ):
                         price = station.price_per_kwh
                         cost = (
                             compute_charging_cost(energy_required_kwh, price)
@@ -536,12 +561,18 @@ def _create_slot_booking(
         )
         if (
             postgres_constraint == "uq_booking_slot_claim_charger_start"
+            or postgres_constraint == "uq_booking_slot_claim_vehicle_start"
             or "booking_slot_claims.charger_id, booking_slot_claims.slot_start_time"
+            in message
+            or "booking_slot_claims.vehicle_id, booking_slot_claims.slot_start_time"
             in message
         ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Selected slot was just booked by another request.",
+                detail=(
+                    "Selected slot was just booked by another request, or the vehicle "
+                    "already has an overlapping booking."
+                ),
             ) from error
         raise
     db.commit()

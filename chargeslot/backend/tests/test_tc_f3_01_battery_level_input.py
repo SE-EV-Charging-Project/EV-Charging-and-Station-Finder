@@ -777,6 +777,7 @@ def test_tc_f3_13_database_claim_prevents_duplicate_charger_intervals(
         BookingSlotClaim(
             charger_id=alice_charger.id,
             slot_start_time=slot_start,
+            vehicle_id=alice_vehicle.id,
             booking_id=first_booking.id,
         )
     )
@@ -801,12 +802,138 @@ def test_tc_f3_13_database_claim_prevents_duplicate_charger_intervals(
         BookingSlotClaim(
             charger_id=alice_charger.id,
             slot_start_time=slot_start,
+            vehicle_id=alice_vehicle.id,
             booking_id=duplicate_booking.id,
         )
     )
-    with pytest.raises(IntegrityError, match="booking_slot_claims.charger_id"):
+    with pytest.raises(
+        IntegrityError,
+        match="booking_slot_claims.(charger_id|vehicle_id)",
+    ):
         db_session.commit()
     db_session.rollback()
+
+    second_charger = Charger(
+        station_id=alice_station.id,
+        power_kw=30.0,
+        current_type=CurrentType.DC,
+        gateway_id="second-vehicle-claim-gateway",
+    )
+    db_session.add(second_charger)
+    db_session.commit()
+    db_session.refresh(second_charger)
+    second_booking = Booking(
+        user_id=driver_alice.id,
+        vehicle_id=alice_vehicle.id,
+        station_id=alice_station.id,
+        charger_id=second_charger.id,
+        start_soc=20,
+        target_soc=80,
+        est_energy_kwh=27.0,
+        est_duration_min=60,
+        status=BookingStatus.CONFIRMED,
+        start_time=slot_start,
+        end_time=slot_start + timedelta(hours=1),
+    )
+    db_session.add(second_booking)
+    db_session.flush()
+    db_session.add(
+        BookingSlotClaim(
+            charger_id=second_charger.id,
+            slot_start_time=slot_start,
+            vehicle_id=alice_vehicle.id,
+            booking_id=second_booking.id,
+        )
+    )
+    with pytest.raises(
+        IntegrityError,
+        match="booking_slot_claims.vehicle_id",
+    ):
+        db_session.commit()
+    db_session.rollback()
+
+
+def test_tc_f3_14_vehicle_cannot_book_overlapping_slot_on_another_charger(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+    alice_station: Station,
+    alice_charger: Charger,
+    alice_connector: Connector,
+):
+    alice_vehicle.current_soc = 20
+    second_charger = Charger(
+        station_id=alice_station.id,
+        power_kw=30.0,
+        current_type=CurrentType.DC,
+        gateway_id="second-vehicle-overlap-gateway",
+    )
+    db_session.add(second_charger)
+    db_session.commit()
+    db_session.refresh(second_charger)
+    db_session.add(
+        Connector(
+            charger_id=second_charger.id,
+            connector_type=ConnectorType.CCS2,
+            status=ConnectorStatus.AVAILABLE,
+        )
+    )
+    slot_start = datetime.combine(
+        datetime.now(timezone.utc).date() + timedelta(days=1),
+        time(9, 0),
+        tzinfo=timezone.utc,
+    )
+    db_session.add(
+        Booking(
+            user_id=driver_alice.id,
+            vehicle_id=alice_vehicle.id,
+            station_id=alice_station.id,
+            charger_id=alice_charger.id,
+            start_soc=20,
+            target_soc=80,
+            est_energy_kwh=27.0,
+            est_duration_min=60,
+            status=BookingStatus.CONFIRMED,
+            start_time=slot_start,
+            end_time=slot_start + timedelta(hours=1),
+        )
+    )
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {make_token(driver_alice)}"}
+    request_payload = {
+        "station_id": alice_station.id,
+        "charger_id": second_charger.id,
+        "vehicle_id": alice_vehicle.id,
+        "start_time": (slot_start + timedelta(minutes=45)).isoformat(),
+        "target_soc": 80,
+    }
+    booking_response = client.post(
+        "/api/v1/bookings/manual-slot",
+        json=request_payload,
+        headers=headers,
+    )
+    assert booking_response.status_code == 409
+
+    recommendation_response = client.get(
+        "/api/v1/bookings/recommended-slots",
+        params={
+            "vehicle_id": alice_vehicle.id,
+            "date": slot_start.date().isoformat(),
+            "target_soc": 80,
+            "station_id": alice_station.id,
+        },
+        headers=headers,
+    )
+    assert recommendation_response.status_code == 200
+    assert all(
+        datetime.fromisoformat(item["start_time"].replace("Z", "+00:00"))
+        >= slot_start + timedelta(hours=1)
+        or datetime.fromisoformat(item["end_time"].replace("Z", "+00:00"))
+        <= slot_start
+        for item in recommendation_response.json()["items"]
+    )
 
 
 def test_tc_f3_07_charging_time_requires_owned_vehicle_and_saved_battery_level(
