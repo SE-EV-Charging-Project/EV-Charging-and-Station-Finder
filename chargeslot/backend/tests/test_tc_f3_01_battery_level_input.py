@@ -936,6 +936,112 @@ def test_tc_f3_14_vehicle_cannot_book_overlapping_slot_on_another_charger(
     )
 
 
+def test_tc_f3_23_modify_confirmed_booking_before_cutoff(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+    alice_station: Station,
+    alice_charger: Charger,
+    alice_connector: Connector,
+):
+    alice_vehicle.current_soc = 20
+    slot_start = datetime.combine(
+        datetime.now(timezone.utc).date() + timedelta(days=1),
+        time(9, 0),
+        tzinfo=timezone.utc,
+    )
+    booking = Booking(
+        user_id=driver_alice.id,
+        vehicle_id=alice_vehicle.id,
+        station_id=alice_station.id,
+        charger_id=alice_charger.id,
+        start_soc=20,
+        target_soc=80,
+        est_energy_kwh=27.0,
+        est_duration_min=60,
+        status=BookingStatus.CONFIRMED,
+        start_time=slot_start,
+        end_time=slot_start + timedelta(hours=1),
+    )
+    db_session.add(booking)
+    db_session.commit()
+    db_session.refresh(booking)
+
+    new_start = slot_start + timedelta(hours=1)
+    response = client.patch(
+        f"/api/v1/bookings/{booking.id}",
+        json={
+            "charger_id": alice_charger.id,
+            "start_time": new_start.isoformat(),
+        },
+        headers={"Authorization": f"Bearer {make_token(driver_alice)}"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == BookingStatus.CONFIRMED.value
+    assert datetime.fromisoformat(data["start_time"].replace("Z", "+00:00")) == new_start
+    assert datetime.fromisoformat(data["end_time"].replace("Z", "+00:00")) == (
+        new_start + timedelta(hours=1)
+    )
+    claims = (
+        db_session.query(BookingSlotClaim)
+        .filter(BookingSlotClaim.booking_id == booking.id)
+        .all()
+    )
+    assert len(claims) == 4
+    assert all(claim.slot_start_time.hour == 10 for claim in claims)
+
+
+def test_tc_f3_23_modify_booking_checks_owner_and_thirty_minute_cutoff(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    driver_bob: User,
+    alice_vehicle: Vehicle,
+    alice_station: Station,
+    alice_charger: Charger,
+):
+    slot_start = datetime.now(timezone.utc) + timedelta(days=1)
+    booking = Booking(
+        user_id=driver_alice.id,
+        vehicle_id=alice_vehicle.id,
+        station_id=alice_station.id,
+        charger_id=alice_charger.id,
+        start_soc=20,
+        target_soc=80,
+        est_energy_kwh=27.0,
+        est_duration_min=60,
+        status=BookingStatus.CONFIRMED,
+        start_time=slot_start,
+        end_time=slot_start + timedelta(hours=1),
+    )
+    db_session.add(booking)
+    db_session.commit()
+    payload = {
+        "charger_id": alice_charger.id,
+        "start_time": (slot_start + timedelta(hours=1)).isoformat(),
+    }
+
+    foreign_response = client.patch(
+        f"/api/v1/bookings/{booking.id}",
+        json=payload,
+        headers={"Authorization": f"Bearer {make_token(driver_bob)}"},
+    )
+    assert foreign_response.status_code == 403
+
+    booking.start_time = datetime.now(timezone.utc) + timedelta(minutes=20)
+    booking.end_time = booking.start_time + timedelta(hours=1)
+    db_session.commit()
+    cutoff_response = client.patch(
+        f"/api/v1/bookings/{booking.id}",
+        json=payload,
+        headers={"Authorization": f"Bearer {make_token(driver_alice)}"},
+    )
+    assert cutoff_response.status_code == 409
+
+
 def test_tc_f3_07_charging_time_requires_owned_vehicle_and_saved_battery_level(
     client: TestClient,
     driver_alice: User,

@@ -207,3 +207,22 @@ class SlotHoldResponse(BaseModel):
     end_time: datetime
     status: str
     hold_expires_at: datetime
+
+
+class BookingModificationRequest(BaseModel):
+    """Request to move a confirmed booking to another compatible slot."""
+
+    charger_id: int = Field(..., gt=0, strict=True)
+    start_time: datetime
+
+
+class BookingModificationResponse(BaseModel):
+    """Confirmed booking after its charger or time has been changed."""
+
+    booking_id: int
+    station_id: int
+    charger_id: int
+    vehicle_id: int
+    start_time: datetime
+    end_time: datetime
+    status: str

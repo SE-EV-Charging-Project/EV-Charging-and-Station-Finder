@@ -20,11 +20,13 @@ from app.booking.validators import get_battery_rules as domain_get_battery_rules
 from app.booking.slots import (
     create_manual_slot_booking as domain_create_manual_slot_booking,
     create_slot_hold as domain_create_slot_hold,
+    modify_confirmed_booking as domain_modify_confirmed_booking,
     recommend_slots as domain_recommend_slots,
 )
 from app.models.user import User
 from app.schemas.booking import (
     BatteryLevelResponse,
+    BookingModificationResponse,
     ChargingCostEstimateResponse,
     ChargingTimeEstimateResponse,
     ManualSlotBookingResponse,
@@ -211,5 +213,24 @@ class BookingService:
             charger_id=charger_id,
             start_time=start_time,
             target_soc=target_soc,
+            ip_address=ip_address,
+        )
+
+    @staticmethod
+    def modify_confirmed_booking(
+        db: Session,
+        user: User,
+        booking_id: int,
+        charger_id: int,
+        start_time: datetime,
+        ip_address: str | None = None,
+    ) -> BookingModificationResponse:
+        """Move an owned confirmed booking to a compatible available slot."""
+        return domain_modify_confirmed_booking(
+            db=db,
+            user=user,
+            booking_id=booking_id,
+            charger_id=charger_id,
+            start_time=start_time,
             ip_address=ip_address,
         )
