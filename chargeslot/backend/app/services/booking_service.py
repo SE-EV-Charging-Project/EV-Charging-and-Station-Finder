@@ -21,11 +21,13 @@ from app.booking.slots import (
     create_manual_slot_booking as domain_create_manual_slot_booking,
     create_slot_hold as domain_create_slot_hold,
     modify_confirmed_booking as domain_modify_confirmed_booking,
+    cancel_booking as domain_cancel_booking,
     recommend_slots as domain_recommend_slots,
 )
 from app.models.user import User
 from app.schemas.booking import (
     BatteryLevelResponse,
+    BookingCancellationResponse,
     BookingModificationResponse,
     ChargingCostEstimateResponse,
     ChargingTimeEstimateResponse,
@@ -232,5 +234,20 @@ class BookingService:
             booking_id=booking_id,
             charger_id=charger_id,
             start_time=start_time,
+            ip_address=ip_address,
+        )
+
+    @staticmethod
+    def cancel_booking(
+        db: Session,
+        user: User,
+        booking_id: int,
+        ip_address: str | None = None,
+    ) -> BookingCancellationResponse:
+        """Cancel an owned booking and record any applicable late fee."""
+        return domain_cancel_booking(
+            db=db,
+            user=user,
+            booking_id=booking_id,
             ip_address=ip_address,
         )

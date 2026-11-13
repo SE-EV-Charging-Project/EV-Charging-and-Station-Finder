@@ -26,6 +26,7 @@ from app.models.vehicle import Vehicle
 from app.schemas.booking import (
     ManualSlotBookingResponse,
     BookingModificationResponse,
+    BookingCancellationResponse,
     RecommendedSlotItem,
     RecommendedSlotsResponse,
     SlotHoldResponse,
@@ -719,6 +720,7 @@ def modify_confirmed_booking(
         )
 
     now_utc = datetime.now(timezone.utc)
+    _release_stale_slot_claims(db, now_utc)
     if ensure_utc(booking.start_time) - now_utc < timedelta(minutes=30):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -781,4 +783,106 @@ def modify_confirmed_booking(
         start_time=ensure_utc(booking.start_time),
         end_time=ensure_utc(booking.end_time),
         status=booking.status.value,
+    )
+
+
+def cancel_booking(
+    db: Session,
+    user: User,
+    booking_id: int,
+    ip_address: str | None = None,
+) -> BookingCancellationResponse:
+    now_utc = datetime.now(timezone.utc)
+    booking = (
+        db.query(Booking)
+        .filter(Booking.id == booking_id)
+        .with_for_update()
+        .first()
+    )
+    if booking is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Booking with ID {booking_id} not found.",
+        )
+    if user.role not in (UserRole.DRIVER, UserRole.ADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only drivers and administrators can cancel bookings.",
+        )
+    if user.role != UserRole.ADMIN and booking.user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to cancel this booking.",
+        )
+    if booking.status not in (BookingStatus.HELD, BookingStatus.CONFIRMED):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only held or confirmed bookings can be cancelled.",
+        )
+    if ensure_utc(booking.start_time) <= now_utc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bookings cannot be cancelled after they start.",
+        )
+
+    is_late_cancellation = (
+        booking.status == BookingStatus.CONFIRMED
+        and ensure_utc(booking.start_time) - now_utc < timedelta(minutes=30)
+    )
+    fee_amount = 0.0
+    if is_late_cancellation:
+        station = (
+            db.query(Station)
+            .filter(Station.id == booking.station_id)
+            .first()
+            if booking.station_id is not None
+            else None
+        )
+        if (
+            station is None
+            or station.price_per_kwh is None
+            or booking.est_energy_kwh is None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "A station tariff and booking energy estimate are required to "
+                    "calculate the late cancellation fee."
+                ),
+            )
+        estimated_cost = compute_charging_cost(
+            booking.est_energy_kwh,
+            station.price_per_kwh,
+        )
+        fee_amount = round(estimated_cost * 0.10, 2)
+
+    booking.status = BookingStatus.CANCELLED
+    booking.cancellation_fee_amount = fee_amount
+    db.query(BookingSlotClaim).filter(
+        BookingSlotClaim.booking_id == booking.id
+    ).delete(synchronize_session=False)
+    db.commit()
+    db.refresh(booking)
+
+    AuditService.log_action(
+        db=db,
+        user_id=user.id,
+        action="BOOKING_CANCELLED",
+        resource=f"Booking:{booking.id}",
+        details=(
+            f"Booking {booking.id} cancelled with a fee of INR {fee_amount:.2f}."
+        ),
+        ip_address=ip_address,
+    )
+    message = (
+        "Booking cancelled; the late cancellation fee is due."
+        if is_late_cancellation
+        else "Booking cancelled without a fee."
+    )
+    return BookingCancellationResponse(
+        booking_id=booking.id,
+        status=booking.status.value,
+        cancellation_fee_amount=fee_amount,
+        is_late_cancellation=is_late_cancellation,
+        message=message,
     )

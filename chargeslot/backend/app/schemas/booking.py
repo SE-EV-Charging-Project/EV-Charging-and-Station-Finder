@@ -226,3 +226,14 @@ class BookingModificationResponse(BaseModel):
     start_time: datetime
     end_time: datetime
     status: str
+
+
+class BookingCancellationResponse(BaseModel):
+    """Cancellation result and any late cancellation fee due."""
+
+    booking_id: int
+    status: str
+    cancellation_fee_amount: float
+    currency: str = "INR"
+    is_late_cancellation: bool
+    message: str
