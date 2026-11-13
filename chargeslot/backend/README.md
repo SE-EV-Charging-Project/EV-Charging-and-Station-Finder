@@ -140,6 +140,13 @@ The manual booking request must identify the station, charger, owned vehicle, st
 }
 ```
 
+### Temporary Slot Hold (REQ-F3-12 / CS19-066)
+- **Method:** `POST`
+- **Path:** `/api/v1/bookings/hold-slot`
+- **Auth:** Bearer Token (Driver or Admin)
+
+The request uses the same fields as manual booking. A successful response creates a `Held` booking and includes `hold_expires_at`, exactly five minutes after the hold is created. Expired holds no longer block a slot; payment processing is handled by the payment integration.
+
 ## Running Tests
 
 Execute unit and integration tests using pytest:

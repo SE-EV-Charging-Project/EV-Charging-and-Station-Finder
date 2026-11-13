@@ -194,3 +194,16 @@ class ManualSlotBookingResponse(BaseModel):
     start_time: datetime
     end_time: datetime
     status: str
+
+
+class SlotHoldResponse(BaseModel):
+    """Temporary slot hold while payment is being processed."""
+
+    booking_id: int
+    station_id: int
+    charger_id: int
+    vehicle_id: int
+    start_time: datetime
+    end_time: datetime
+    status: str
+    hold_expires_at: datetime

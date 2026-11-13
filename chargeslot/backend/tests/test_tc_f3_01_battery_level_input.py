@@ -29,6 +29,7 @@ from app.models.vehicle import Vehicle, ConnectorType
 from app.models.charger import Charger, Connector, ConnectorStatus, CurrentType
 from app.models.station import Station, StationStatus
 from app.models.maintenance import MaintenanceWindow
+from app.models.booking import Booking, BookingStatus
 from app.services.booking_service import BookingService
 from app.services.vehicle_service import VehicleService
 from app.utils.security import hash_password, create_access_token
@@ -680,6 +681,61 @@ def test_tc_f3_11_manual_slot_booking_rejects_foreign_vehicle_and_overlaps(
         headers=headers,
     )
     assert foreign_vehicle_response.status_code == 403
+
+
+def test_tc_f3_12_slot_hold_expires_after_five_minutes_and_blocks_booking(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+    alice_station: Station,
+    alice_charger: Charger,
+    alice_connector: Connector,
+):
+    alice_vehicle.current_soc = 20
+    db_session.commit()
+    start_time = datetime.combine(
+        datetime.now(timezone.utc).date() + timedelta(days=1),
+        time(9, 0),
+        tzinfo=timezone.utc,
+    )
+    payload = {
+        "station_id": alice_station.id,
+        "charger_id": alice_charger.id,
+        "vehicle_id": alice_vehicle.id,
+        "start_time": start_time.isoformat(),
+        "target_soc": 80,
+    }
+    headers = {"Authorization": f"Bearer {make_token(driver_alice)}"}
+    response = client.post(
+        "/api/v1/bookings/hold-slot",
+        json=payload,
+        headers=headers,
+    )
+
+    assert response.status_code == 201, response.text
+    hold = response.json()
+    assert hold["status"] == BookingStatus.HELD.value
+    expires_at = datetime.fromisoformat(hold["hold_expires_at"].replace("Z", "+00:00"))
+    assert timedelta(minutes=4, seconds=59) <= expires_at - datetime.now(timezone.utc)
+    assert expires_at - datetime.now(timezone.utc) <= timedelta(minutes=5)
+
+    blocked_booking = client.post(
+        "/api/v1/bookings/manual-slot",
+        json=payload,
+        headers=headers,
+    )
+    assert blocked_booking.status_code == 409
+
+    booking = db_session.query(Booking).filter(Booking.id == hold["booking_id"]).one()
+    booking.hold_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    db_session.commit()
+    available_booking = client.post(
+        "/api/v1/bookings/manual-slot",
+        json=payload,
+        headers=headers,
+    )
+    assert available_booking.status_code == 201, available_booking.text
 
 
 def test_tc_f3_07_charging_time_requires_owned_vehicle_and_saved_battery_level(

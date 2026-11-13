@@ -4,6 +4,7 @@ from datetime import date, datetime, time, timedelta, timezone
 import math
 
 from fastapi import HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.booking.battery import (
@@ -24,6 +25,7 @@ from app.schemas.booking import (
     ManualSlotBookingResponse,
     RecommendedSlotItem,
     RecommendedSlotsResponse,
+    SlotHoldResponse,
 )
 from app.services.audit_service import AuditService
 from app.stations.slots import (
@@ -197,6 +199,11 @@ def _candidate_slots(
         .filter(
             Booking.station_id.in_(station_ids),
             Booking.status.in_(ACTIVE_BOOKING_STATUSES),
+            or_(
+                Booking.status != BookingStatus.HELD,
+                Booking.hold_expires_at.is_(None),
+                Booking.hold_expires_at > now_utc,
+            ),
             Booking.start_time < day_end,
             Booking.end_time > day_start,
         )
@@ -321,7 +328,7 @@ def recommend_slots(
     )
 
 
-def create_manual_slot_booking(
+def _create_slot_booking(
     db: Session,
     user: User,
     station_id: int,
@@ -330,7 +337,8 @@ def create_manual_slot_booking(
     start_time: datetime,
     target_soc: int = 80,
     ip_address: str | None = None,
-) -> ManualSlotBookingResponse:
+    booking_status: BookingStatus = BookingStatus.CONFIRMED,
+) -> tuple[Booking, float, int, float]:
     vehicle, validated_target = _validate_estimate_inputs(
         db=db,
         user=user,
@@ -420,6 +428,7 @@ def create_manual_slot_booking(
             detail="Selected slot is outside operating hours, blocked, or already booked.",
         )
 
+    now_utc = datetime.now(timezone.utc)
     booking = Booking(
         user_id=user.id,
         vehicle_id=vehicle.id,
@@ -430,9 +439,14 @@ def create_manual_slot_booking(
         est_energy_kwh=energy_required_kwh,
         est_duration_min=slot_length_minutes,
         booking_type="manual",
-        status=BookingStatus.CONFIRMED,
+        status=booking_status,
         start_time=selected_slot.start_time,
         end_time=selected_slot.end_time,
+        hold_expires_at=(
+            now_utc + timedelta(minutes=5)
+            if booking_status == BookingStatus.HELD
+            else None
+        ),
     )
     db.add(booking)
     db.commit()
@@ -441,25 +455,91 @@ def create_manual_slot_booking(
     AuditService.log_action(
         db=db,
         user_id=user.id,
-        action="MANUAL_BOOKING_CREATED",
+        action=(
+            "SLOT_HOLD_CREATED"
+            if booking_status == BookingStatus.HELD
+            else "MANUAL_BOOKING_CREATED"
+        ),
         resource=f"Booking:{booking.id}",
         details=(
-            f"Manual booking {booking.id} created for charger {charger.id} "
+            f"{'Slot hold' if booking_status == BookingStatus.HELD else 'Manual booking'} "
+            f"{booking.id} created for charger {charger.id} "
             f"from {booking.start_time.isoformat()} to {booking.end_time.isoformat()}."
         ),
         ip_address=ip_address,
     )
+
+    return booking, energy_required_kwh, slot_length_minutes, charging_time_minutes
+
+
+def create_manual_slot_booking(
+    db: Session,
+    user: User,
+    station_id: int,
+    vehicle_id: int,
+    charger_id: int,
+    start_time: datetime,
+    target_soc: int = 80,
+    ip_address: str | None = None,
+) -> ManualSlotBookingResponse:
+    booking, energy_required_kwh, slot_length_minutes, charging_time_minutes = (
+        _create_slot_booking(
+            db=db,
+            user=user,
+            station_id=station_id,
+            vehicle_id=vehicle_id,
+            charger_id=charger_id,
+            start_time=start_time,
+            target_soc=target_soc,
+            ip_address=ip_address,
+        )
+    )
     return ManualSlotBookingResponse(
         booking_id=booking.id,
-        station_id=station.id,
-        charger_id=charger.id,
-        vehicle_id=vehicle.id,
-        start_soc=vehicle.current_soc,
-        target_soc=validated_target,
+        station_id=booking.station_id,
+        charger_id=booking.charger_id,
+        vehicle_id=booking.vehicle_id,
+        start_soc=booking.start_soc,
+        target_soc=booking.target_soc,
         energy_required_kwh=energy_required_kwh,
         estimated_charging_time_minutes=charging_time_minutes,
         slot_length_minutes=slot_length_minutes,
-        start_time=selected_slot.start_time,
-        end_time=selected_slot.end_time,
+        start_time=ensure_utc(booking.start_time),
+        end_time=ensure_utc(booking.end_time),
         status=booking.status.value,
+    )
+
+
+def create_slot_hold(
+    db: Session,
+    user: User,
+    station_id: int,
+    vehicle_id: int,
+    charger_id: int,
+    start_time: datetime,
+    target_soc: int = 80,
+    ip_address: str | None = None,
+) -> SlotHoldResponse:
+    booking, _, _, _ = _create_slot_booking(
+        db=db,
+        user=user,
+        station_id=station_id,
+        vehicle_id=vehicle_id,
+        charger_id=charger_id,
+        start_time=start_time,
+        target_soc=target_soc,
+        ip_address=ip_address,
+        booking_status=BookingStatus.HELD,
+    )
+    if booking.hold_expires_at is None:
+        raise RuntimeError("Persisted slot hold is missing its expiration time.")
+    return SlotHoldResponse(
+        booking_id=booking.id,
+        station_id=booking.station_id,
+        charger_id=booking.charger_id,
+        vehicle_id=booking.vehicle_id,
+        start_time=ensure_utc(booking.start_time),
+        end_time=ensure_utc(booking.end_time),
+        status=booking.status.value,
+        hold_expires_at=ensure_utc(booking.hold_expires_at),
     )
