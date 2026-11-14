@@ -176,3 +176,69 @@ class ETASlotCheckResponse(BaseModel):
         description="Alternative available slot options later the same day",
     )
     checked_at: datetime = Field(..., description="Timestamp when check was executed")
+
+
+# ---------------------------------------------------------------------------
+# Route Cache & Fallback Schemas (REQ-F2-28 / CS19-054)
+# ---------------------------------------------------------------------------
+
+
+class CachedRouteResponse(BaseModel):
+    """
+    Route preview with 2-minute caching and straight-line fallback notice (REQ-F2-28 / CS19-054).
+    """
+
+    station_id: int = Field(..., description="Target station ID")
+    station_name: str = Field(..., description="Target station name")
+    station_address: str = Field(..., description="Target station address")
+    station_status: str = Field(..., description="Station approval status")
+    is_active: bool = Field(..., description="Whether station is active")
+    origin_latitude: float = Field(..., description="Driver origin latitude")
+    origin_longitude: float = Field(..., description="Driver origin longitude")
+    destination_latitude: float = Field(..., description="Station destination latitude")
+    destination_longitude: float = Field(..., description="Station destination longitude")
+    straight_line_distance_km: float = Field(..., ge=0.0, description="Great-circle distance in km")
+    road_distance_km: float = Field(..., ge=0.0, description="Road network distance or straight-line fallback in km")
+    estimated_travel_time_minutes: float = Field(..., ge=0.0, description="Estimated travel time in minutes")
+    traffic_condition: str = Field(..., description="Current traffic state: low, normal, heavy, severe")
+    traffic_delay_minutes: float = Field(..., ge=0.0, description="Delay attributed to traffic in minutes")
+    average_speed_kmh: float = Field(..., ge=0.0, description="Estimated average speed in km/h")
+    route_geometry: list[list[float]] = Field(
+        default_factory=list,
+        description="List of [latitude, longitude] coordinates tracing the route path",
+    )
+    waypoints: list[RouteWaypoint] = Field(
+        default_factory=list,
+        description="Turn-by-turn or preview waypoints along the route",
+    )
+    is_fallback: bool = Field(
+        default=False,
+        description="True when maps service is unavailable and straight-line fallback is shown (SR-F2-09 / REQ-F2-28)",
+    )
+    fallback_mode: str | None = Field(
+        default=None,
+        description="Fallback mode identifier: 'straight_line' when maps service is unavailable",
+    )
+    fallback_notice: str | None = Field(
+        default=None,
+        description="Notice message displayed when maps service is unavailable",
+    )
+    cache_hit: bool = Field(
+        default=False,
+        description="True if route was served from 2-minute route cache",
+    )
+    cache_age_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Age of the cached route in seconds",
+    )
+    cache_ttl_seconds: int = Field(
+        default=120,
+        description="Cache time-to-live in seconds (120 seconds / 2 minutes per REQ-F2-28)",
+    )
+    cache_expires_at: datetime = Field(
+        ...,
+        description="Timestamp when cache entry will expire",
+    )
+    generated_at: datetime = Field(..., description="Timestamp when route preview was originally calculated")
+

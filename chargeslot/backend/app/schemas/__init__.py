@@ -156,6 +156,7 @@ from app.schemas.navigation import (
     ETASlotStatus,
     RescheduleSlotOption,
     ETASlotCheckResponse,
+    CachedRouteResponse,
 )
 
 __all__ = [
@@ -291,4 +292,5 @@ __all__ = [
     "ETASlotStatus",
     "RescheduleSlotOption",
     "ETASlotCheckResponse",
+    "CachedRouteResponse",
 ]

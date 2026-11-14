@@ -23,6 +23,13 @@ from app.navigation.eta import (
     find_reschedule_options,
     DEFAULT_GRACE_PERIOD_MINUTES,
 )
+from app.navigation.cache import (
+    get_cached_route_preview,
+    clear_route_cache,
+    make_cache_key,
+    ROUTE_CACHE_TTL_SECONDS,
+    FALLBACK_NOTICE_TEXT,
+)
 
 __all__ = [
     "calculate_route_preview",
@@ -38,4 +45,9 @@ __all__ = [
     "check_driver_eta_versus_slot",
     "find_reschedule_options",
     "DEFAULT_GRACE_PERIOD_MINUTES",
+    "get_cached_route_preview",
+    "clear_route_cache",
+    "make_cache_key",
+    "ROUTE_CACHE_TTL_SECONDS",
+    "FALLBACK_NOTICE_TEXT",
 ]
