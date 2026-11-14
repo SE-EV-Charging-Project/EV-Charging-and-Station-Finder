@@ -10,7 +10,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.station import Station, StationStatus
-from app.models.charger import Charger, Connector, ConnectorStatus
+from app.models.charger import Charger, Connector, ConnectorStatus, CurrentType
 from app.models.vehicle import Vehicle
 from app.models.user import User, UserRole
 from app.schemas.discovery import NearbyStationItem
@@ -46,7 +46,8 @@ def apply_station_filters(
     - available_now: Station must possess at least one Available connector.
     - max_price_kwh: Station tariff/price <= max_price_kwh.
     - amenities: Station must possess all specified amenities.
-    - vehicle_id: Station must possess connectors compatible with vehicle's plug type.
+    - vehicle_id: Station must possess an operational charger with a matching plug
+      and supported AC/DC power; reported compatible power is capped to the vehicle.
     - latitude/longitude/radius_km: Optional proximity bounding.
     """
     # 1. Parameter Validation
@@ -144,14 +145,25 @@ def apply_station_filters(
             for conn in all_connectors
         }
 
+        compatible_chargers: list[tuple[Charger, float]] = []
+
         # Filter A: Vehicle Compatibility
         if target_vehicle is not None:
-            veh_conn = (
-                target_vehicle.connector_type.value.lower()
-                if hasattr(target_vehicle.connector_type, "value")
-                else str(target_vehicle.connector_type).lower()
-            )
-            if veh_conn not in station_conn_types_clean:
+            for charger in active_chargers:
+                vehicle_power_kw = (
+                    target_vehicle.max_ac_kw
+                    if charger.current_type == CurrentType.AC
+                    else target_vehicle.max_dc_kw
+                )
+                if charger.power_kw <= 0 or vehicle_power_kw <= 0:
+                    continue
+                if any(
+                    connector.connector_type == target_vehicle.connector_type
+                    for connector in charger.connectors
+                ):
+                    compatible_chargers.append((charger, float(vehicle_power_kw)))
+
+            if not compatible_chargers:
                 continue
 
         # Filter B: Connector Types
@@ -206,6 +218,14 @@ def apply_station_filters(
         max_p_display = (
             max([c.power_kw for c in active_chargers]) if active_chargers else None
         )
+        vehicle_compatible_max_power = (
+            max(
+                min(float(charger.power_kw), vehicle_power_kw)
+                for charger, vehicle_power_kw in compatible_chargers
+            )
+            if compatible_chargers
+            else None
+        )
 
         item = NearbyStationItem(
             id=station.id,
@@ -225,6 +245,7 @@ def apply_station_filters(
             available_connectors=len(avail_connectors),
             connector_types=connector_types_display,
             max_power_kw=max_p_display,
+            vehicle_compatible_max_power_kw=vehicle_compatible_max_power,
             price_per_kwh=getattr(station, "price_per_kwh", None),
             color_code=marker.color_code.value,
             status_label=marker.status_label,

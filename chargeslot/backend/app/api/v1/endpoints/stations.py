@@ -527,7 +527,8 @@ def patch_station_availability_markers(
     summary="Filter stations (SW Architecture Route)",
     description=(
         "Filters stations by connector type, minimum power, availability now, "
-        "maximum price per kWh, amenities, and vehicle compatibility (REQ-F2-09 / CS19-035)."
+        "maximum price per kWh, amenities, and vehicle compatibility. Vehicle filtering "
+        "matches the connector type and AC/DC power capability (REQ-F3-05)."
     ),
 )
 def get_station_filter_stations(

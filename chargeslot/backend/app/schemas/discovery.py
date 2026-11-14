@@ -73,6 +73,10 @@ class NearbyStationItem(BaseModel):
     available_connectors: int = 0
     connector_types: list[str] = Field(default_factory=list)
     max_power_kw: float | None = None
+    vehicle_compatible_max_power_kw: float | None = Field(
+        default=None,
+        description="Maximum effective power for the selected vehicle's compatible connectors",
+    )
     price_per_kwh: float | None = Field(default=None, description="Tariff price per kWh in INR (REQ-F2-10)")
     color_code: str | None = Field(default=None, description="Marker colour: green, amber, red, grey (REQ-F2-08)")
     status_label: str | None = Field(default=None, description="Accessibility text label e.g. Available, Occupied")
