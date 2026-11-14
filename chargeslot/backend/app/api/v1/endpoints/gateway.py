@@ -7,12 +7,18 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_operator, security
 from app.core.config import settings
 from app.db.session import get_db
-from app.gateway.ingest import get_connector_status_history, ingest_status
+from app.gateway.ingest import (
+    get_connector_status_history,
+    ingest_meter_value,
+    ingest_status,
+)
 from app.models.user import User, UserRole
 from app.schemas.gateway import (
     ConnectorStatusHistoryResponse,
     ConnectorStatusIngestResponse,
+    GatewayMeterValueIngestRequest,
     GatewayStatusIngestRequest,
+    MeterValueIngestResponse,
 )
 
 gateway_ocpp_router = APIRouter(tags=["Gateway Telemetry"])
@@ -82,6 +88,32 @@ def ingest_ocpp_connector_status(
         idempotency_key=payload.idempotency_key,
         actor_user=actor_user,
         client_ip=client_ip,
+    )
+
+
+@gateway_ocpp_router.post(
+    "/ocpp/1.6j/meter-values",
+    response_model=MeterValueIngestResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Ingest OCPP meter values for an active charging session",
+)
+def ingest_ocpp_meter_values(
+    payload: GatewayMeterValueIngestRequest,
+    db: Session = Depends(get_db),
+    actor_user: User | None = Depends(authenticate_gateway_or_staff),
+) -> MeterValueIngestResponse:
+    """Persist normalized OCPP power and cumulative energy measurements."""
+    return ingest_meter_value(
+        db=db,
+        connector_id=payload.connector_id,
+        gateway_id=payload.gateway_id,
+        connector_index=payload.connector_index,
+        power_kw=payload.power_kw,
+        energy_meter_kwh=payload.energy_meter_kwh,
+        observed_at=payload.observed_at,
+        transaction_id=payload.transaction_id,
+        idempotency_key=payload.idempotency_key,
+        actor_user=actor_user,
     )
 
 

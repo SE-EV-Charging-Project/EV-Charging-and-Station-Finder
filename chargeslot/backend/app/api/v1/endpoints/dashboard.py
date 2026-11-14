@@ -7,16 +7,38 @@ from app.dashboard.staleness import (
     DEFAULT_STALE_THRESHOLD_SECONDS,
     get_stale_connector_status_display,
 )
-from app.dashboard.views import get_live_connector_status_display
+from app.dashboard.views import (
+    get_live_connector_status_display,
+    get_live_session_monitor,
+)
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.dashboard import (
     LiveConnectorStatusDisplayResponse,
+    LiveSessionMonitorResponse,
     StaleStatusHandlingResponse,
 )
 
 router = APIRouter(tags=["Live Status Dashboard"])
 ws_router = APIRouter(tags=["Live Status Dashboard WebSocket"])
+
+
+@router.get(
+    "/bookings/{booking_id}/live-monitor",
+    response_model=LiveSessionMonitorResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get meter-backed live charging session metrics",
+    description=(
+        "Returns live power, session energy, estimated SoC, elapsed time, and estimated cost. "
+        "Clients should refresh every 30 seconds (REQ-F3-29)."
+    ),
+)
+def display_live_session_monitor(
+    booking_id: int = Path(..., gt=0, description="Active booking ID"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> LiveSessionMonitorResponse:
+    return get_live_session_monitor(db=db, user=current_user, booking_id=booking_id)
 
 
 @router.get(

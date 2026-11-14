@@ -18,6 +18,7 @@ from app.models.fault_report import (
     FaultyChargerReport,
 )
 from app.models.connector_status_event import ConnectorStatusEvent
+from app.models.charging_session_reading import ChargingSessionReading
 
 __all__ = [
     "User",
@@ -48,4 +49,5 @@ __all__ = [
     "FaultType",
     "FaultyChargerReport",
     "ConnectorStatusEvent",
+    "ChargingSessionReading",
 ]

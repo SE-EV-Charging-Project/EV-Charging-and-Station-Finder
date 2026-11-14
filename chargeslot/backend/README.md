@@ -202,3 +202,11 @@ With code coverage:
 ```bash
 pytest tests/test_tc_f3_01_battery_level_input.py --cov=app/booking --cov-report=term-missing
 ```
+
+### Live Charging Session Monitor (REQ-F3-29 / CS19-083)
+
+The gateway can submit normalized OCPP meter samples to `POST /api/v1/gateway/ocpp/1.6j/meter-values` using `X-Gateway-Secret` or an Operator/Admin bearer token. Supply a `connector_id` or `gateway_id` with a 1-based `connector_index`, along with `power_kw`, cumulative imported `energy_meter_kwh`, and an optional `observed_at`, `transaction_id`, and idempotency key. Power must be non-negative and no more than 110% of the charger's rated power; cumulative energy cannot decrease during a session. A sample is accepted only when exactly one booking on that charger is active.
+
+Drivers can read their own active session at `GET /api/v1/bookings/{booking_id}/live-monitor`; the station's Operator and an Admin may also read it. The response includes the latest measured power, energy delivered since the first stored meter sample, estimated SoC, elapsed time since that first sample, and estimated cost in INR. SoC uses the booking's start SoC, vehicle battery capacity, and the existing 90% charging-efficiency assumption. Cost is `energy_kwh × station price_per_kwh`; it is `null` when no tariff is configured. Missing telemetry is reported as `has_telemetry: false` with measurement fields unset rather than fabricated values.
+
+Clients should poll the monitor endpoint every 30 seconds. A reading is reported stale when its observation is more than 30 seconds old. The gateway endpoint expects normalized power in kW and cumulative imported energy in kWh; an OCPP adapter must convert its `MeterValues` samples to these units before submission.
