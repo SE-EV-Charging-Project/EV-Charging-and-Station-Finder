@@ -19,6 +19,11 @@ from app.models.fault_report import (
 )
 from app.models.connector_status_event import ConnectorStatusEvent
 from app.models.charging_session_reading import ChargingSessionReading
+from app.models.charging_session_command import (
+    ChargingSessionCommand,
+    SessionStopCommandStatus,
+    SessionStopCommandTrigger,
+)
 
 __all__ = [
     "User",
@@ -50,4 +55,7 @@ __all__ = [
     "FaultyChargerReport",
     "ConnectorStatusEvent",
     "ChargingSessionReading",
+    "ChargingSessionCommand",
+    "SessionStopCommandStatus",
+    "SessionStopCommandTrigger",
 ]

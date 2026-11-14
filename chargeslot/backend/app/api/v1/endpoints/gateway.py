@@ -12,6 +12,11 @@ from app.gateway.ingest import (
     ingest_meter_value,
     ingest_status,
 )
+from app.booking.session_control import (
+    get_pending_session_stop_commands,
+    record_session_stop_command_result,
+    record_session_stop_transaction,
+)
 from app.models.user import User, UserRole
 from app.schemas.gateway import (
     ConnectorStatusHistoryResponse,
@@ -19,6 +24,13 @@ from app.schemas.gateway import (
     GatewayMeterValueIngestRequest,
     GatewayStatusIngestRequest,
     MeterValueIngestResponse,
+)
+from app.schemas.session import (
+    GatewaySessionStopResultRequest,
+    PendingSessionStopCommandsResponse,
+    SessionStopCommandResponse,
+    SessionStopTransactionRequest,
+    SessionStopTransactionResponse,
 )
 
 gateway_ocpp_router = APIRouter(tags=["Gateway Telemetry"])
@@ -113,6 +125,69 @@ def ingest_ocpp_meter_values(
         observed_at=payload.observed_at,
         transaction_id=payload.transaction_id,
         idempotency_key=payload.idempotency_key,
+        actor_user=actor_user,
+    )
+
+
+@gateway_ocpp_router.get(
+    "/ocpp/1.6j/commands",
+    response_model=PendingSessionStopCommandsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Poll pending OCPP session stop commands",
+)
+def poll_ocpp_session_stop_commands(
+    gateway_id: str = Query(..., min_length=1, max_length=100),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    actor_user: User | None = Depends(authenticate_gateway_or_staff),
+) -> PendingSessionStopCommandsResponse:
+    """Return pending RemoteStopTransaction requests without acknowledging delivery."""
+    return get_pending_session_stop_commands(
+        db=db,
+        gateway_id=gateway_id,
+        actor_user=actor_user,
+        limit=limit,
+    )
+
+
+@gateway_ocpp_router.post(
+    "/ocpp/1.6j/commands/{command_id}/result",
+    response_model=SessionStopCommandResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Record an OCPP session stop command result",
+)
+def report_ocpp_session_stop_command_result(
+    command_id: int,
+    payload: GatewaySessionStopResultRequest,
+    db: Session = Depends(get_db),
+    actor_user: User | None = Depends(authenticate_gateway_or_staff),
+) -> SessionStopCommandResponse:
+    """Persist the gateway's Accepted or Rejected result for a stop command."""
+    return record_session_stop_command_result(
+        db=db,
+        command_id=command_id,
+        gateway_id=payload.gateway_id,
+        result=payload.result,
+        error_code=payload.error_code,
+        actor_user=actor_user,
+    )
+
+
+@gateway_ocpp_router.post(
+    "/ocpp/1.6j/stop-transaction",
+    response_model=SessionStopTransactionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Confirm an OCPP charging session has stopped",
+)
+def ingest_ocpp_stop_transaction(
+    payload: SessionStopTransactionRequest,
+    db: Session = Depends(get_db),
+    actor_user: User | None = Depends(authenticate_gateway_or_staff),
+) -> SessionStopTransactionResponse:
+    """Complete a booking only after the gateway reports StopTransaction."""
+    return record_session_stop_transaction(
+        db=db,
+        payload=payload,
         actor_user=actor_user,
     )
 

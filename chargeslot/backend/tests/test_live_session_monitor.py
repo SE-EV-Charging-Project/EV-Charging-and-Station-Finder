@@ -137,6 +137,7 @@ def _ingest_meter_value(
     energy_meter_kwh: float,
     power_kw: float = 7.5,
     message_id: str | None = None,
+    transaction_id: int | None = None,
 ):
     payload = {
         "gateway_id": session["charger"].gateway_id,
@@ -147,6 +148,8 @@ def _ingest_meter_value(
     }
     if message_id:
         payload["messageId"] = message_id
+    if transaction_id is not None:
+        payload["transactionId"] = transaction_id
     return client.post(
         "/api/v1/gateway/ocpp/1.6j/meter-values",
         json=payload,
@@ -312,3 +315,223 @@ def test_meter_ingestion_rejects_non_finite_global_range(client, active_session)
     )
 
     assert response.status_code == 422
+
+
+def test_driver_stop_is_queued_until_gateway_confirms_stop_transaction(
+    client, active_session, db_session
+):
+    observed_at = datetime.now(timezone.utc)
+    meter_response = _ingest_meter_value(
+        client,
+        active_session,
+        observed_at=observed_at,
+        energy_meter_kwh=50.0,
+        transaction_id=731,
+    )
+    assert meter_response.status_code == 200
+
+    stop_url = f"/api/v1/bookings/{active_session['booking'].id}/stop-session"
+    stop_response = client.post(
+        stop_url,
+        headers=_auth_header(active_session["driver"]),
+    )
+    assert stop_response.status_code == 202
+    command = stop_response.json()
+    assert command["status"] == "Pending"
+    assert command["trigger"] == "driver"
+
+    repeated_stop = client.post(
+        stop_url,
+        headers=_auth_header(active_session["driver"]),
+    )
+    assert repeated_stop.status_code == 202
+    assert repeated_stop.json()["command_id"] == command["command_id"]
+    assert repeated_stop.json()["already_requested"] is True
+
+    poll_response = client.get(
+        "/api/v1/gateway/ocpp/1.6j/commands",
+        params={"gateway_id": active_session["charger"].gateway_id},
+        headers={"X-Gateway-Secret": settings.GATEWAY_WEBHOOK_SECRET},
+    )
+    assert poll_response.status_code == 200
+    queued = poll_response.json()["commands"]
+    assert len(queued) == 1
+    assert queued[0]["action"] == "RemoteStopTransaction"
+    assert queued[0]["transaction_id"] == 731
+
+    result_response = client.post(
+        f"/api/v1/gateway/ocpp/1.6j/commands/{command['command_id']}/result",
+        json={"gateway_id": active_session["charger"].gateway_id, "result": "Accepted"},
+        headers={"X-Gateway-Secret": settings.GATEWAY_WEBHOOK_SECRET},
+    )
+    assert result_response.status_code == 200
+    assert result_response.json()["status"] == "Accepted"
+    db_session.refresh(active_session["booking"])
+    assert active_session["booking"].status == BookingStatus.ACTIVE
+
+    stop_transaction_payload = {
+        "gateway_id": active_session["charger"].gateway_id,
+        "transaction_id": 731,
+        "meter_stop_wh": 51_250,
+        "observed_at": (observed_at + timedelta(seconds=5)).isoformat(),
+        "idempotency_key": "stop-event-731",
+    }
+    confirmation = client.post(
+        "/api/v1/gateway/ocpp/1.6j/stop-transaction",
+        json=stop_transaction_payload,
+        headers={"X-Gateway-Secret": settings.GATEWAY_WEBHOOK_SECRET},
+    )
+    assert confirmation.status_code == 200
+    assert confirmation.json()["status"] == "Completed"
+    assert confirmation.json()["applied"] is True
+    db_session.refresh(active_session["booking"])
+    assert active_session["booking"].status == BookingStatus.COMPLETED
+    assert active_session["booking"].meter_stop_wh == 51_250
+
+    replay = client.post(
+        "/api/v1/gateway/ocpp/1.6j/stop-transaction",
+        json=stop_transaction_payload,
+        headers={"X-Gateway-Secret": settings.GATEWAY_WEBHOOK_SECRET},
+    )
+    assert replay.status_code == 200
+    assert replay.json()["idempotent_replay"] is True
+
+
+def test_stop_request_enforces_booking_ownership_and_active_transaction(
+    client, active_session
+):
+    stop_url = f"/api/v1/bookings/{active_session['booking'].id}/stop-session"
+    foreign_driver = client.post(
+        stop_url,
+        headers=_auth_header(active_session["other_driver"]),
+    )
+    assert foreign_driver.status_code == 404
+
+    no_transaction = client.post(
+        stop_url,
+        headers=_auth_header(active_session["driver"]),
+    )
+    assert no_transaction.status_code == 409
+    assert "transaction ID" in no_transaction.json()["detail"]
+
+
+def test_target_energy_queues_one_stop_command(client, active_session, db_session):
+    active_session["booking"].est_energy_kwh = 1.0
+    db_session.commit()
+    start = datetime.now(timezone.utc)
+
+    first = _ingest_meter_value(
+        client,
+        active_session,
+        observed_at=start,
+        energy_meter_kwh=100.0,
+        transaction_id=812,
+    )
+    assert first.status_code == 200
+    reached = _ingest_meter_value(
+        client,
+        active_session,
+        observed_at=start + timedelta(seconds=30),
+        energy_meter_kwh=101.2,
+        message_id="target-meter-value",
+        transaction_id=812,
+    )
+    assert reached.status_code == 200
+    assert reached.json()["target_energy_reached"] is True
+    command_id = reached.json()["auto_stop_command_id"]
+    assert command_id is not None
+    assert reached.json()["auto_stop_status"] == "Pending"
+
+    replay = _ingest_meter_value(
+        client,
+        active_session,
+        observed_at=start + timedelta(seconds=35),
+        energy_meter_kwh=101.2,
+        message_id="target-meter-value",
+        transaction_id=812,
+    )
+    assert replay.status_code == 200
+    assert replay.json()["idempotent_replay"] is True
+    assert replay.json()["auto_stop_command_id"] == command_id
+    assert replay.json()["auto_stop_status"] == "Pending"
+
+    subsequent = _ingest_meter_value(
+        client,
+        active_session,
+        observed_at=start + timedelta(seconds=60),
+        energy_meter_kwh=101.4,
+        transaction_id=812,
+    )
+    assert subsequent.status_code == 200
+    assert subsequent.json()["auto_stop_command_id"] == command_id
+
+    poll_response = client.get(
+        "/api/v1/gateway/ocpp/1.6j/commands",
+        params={"gateway_id": active_session["charger"].gateway_id},
+        headers={"X-Gateway-Secret": settings.GATEWAY_WEBHOOK_SECRET},
+    )
+    assert len(poll_response.json()["commands"]) == 1
+    assert poll_response.json()["commands"][0]["trigger"] == "target_energy"
+
+
+def test_target_energy_reached_without_transaction_is_reported_not_faked(
+    client, active_session, db_session
+):
+    active_session["booking"].est_energy_kwh = 0.5
+    db_session.commit()
+    start = datetime.now(timezone.utc)
+    _ingest_meter_value(
+        client,
+        active_session,
+        observed_at=start,
+        energy_meter_kwh=10.0,
+    )
+    reached = _ingest_meter_value(
+        client,
+        active_session,
+        observed_at=start + timedelta(seconds=30),
+        energy_meter_kwh=10.6,
+    )
+
+    assert reached.status_code == 200
+    assert reached.json()["target_energy_reached"] is True
+    assert reached.json()["auto_stop_command_id"] is None
+    assert "no OCPP transaction ID" in reached.json()["auto_stop_warning"]
+
+
+def test_rejected_stop_command_can_be_retried(client, active_session):
+    observed_at = datetime.now(timezone.utc)
+    _ingest_meter_value(
+        client,
+        active_session,
+        observed_at=observed_at,
+        energy_meter_kwh=20.0,
+        transaction_id=913,
+    )
+    stop_url = f"/api/v1/bookings/{active_session['booking'].id}/stop-session"
+    initial = client.post(
+        stop_url,
+        headers=_auth_header(active_session["driver"]),
+    )
+    assert initial.status_code == 202
+    command_id = initial.json()["command_id"]
+
+    rejected = client.post(
+        f"/api/v1/gateway/ocpp/1.6j/commands/{command_id}/result",
+        json={
+            "gateway_id": active_session["charger"].gateway_id,
+            "result": "Rejected",
+            "error_code": "NotImplemented",
+        },
+        headers={"X-Gateway-Secret": settings.GATEWAY_WEBHOOK_SECRET},
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "Rejected"
+
+    retried = client.post(
+        stop_url,
+        headers=_auth_header(active_session["driver"]),
+    )
+    assert retried.status_code == 202
+    assert retried.json()["status"] == "Pending"
+    assert retried.json()["command_id"] != command_id

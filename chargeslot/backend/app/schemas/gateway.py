@@ -128,6 +128,10 @@ class MeterValueIngestResponse(BaseModel):
     observed_at: datetime
     applied: bool = True
     idempotent_replay: bool = False
+    target_energy_reached: bool = False
+    auto_stop_command_id: int | None = None
+    auto_stop_status: str | None = None
+    auto_stop_warning: str | None = None
 
 
 class ConnectorStatusEventItem(BaseModel):
