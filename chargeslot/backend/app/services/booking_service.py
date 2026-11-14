@@ -13,6 +13,7 @@ from app.booking.battery import (
     compute_usable_range as domain_compute_usable_range,
     compute_estimated_range as domain_compute_estimated_range,
     compute_energy_required as domain_compute_energy_required,
+    estimate_energy_required as domain_estimate_energy_required,
     estimate_charging_time as domain_estimate_charging_time,
     estimate_charging_cost as domain_estimate_charging_cost,
 )
@@ -31,6 +32,7 @@ from app.schemas.booking import (
     BookingModificationResponse,
     ChargingCostEstimateResponse,
     ChargingTimeEstimateResponse,
+    EnergyEstimateResponse,
     ManualSlotBookingResponse,
     RecommendedSlotsResponse,
     SlotHoldResponse,
@@ -131,6 +133,21 @@ class BookingService:
             user=user,
             vehicle_id=vehicle_id,
             charger_id=charger_id,
+            target_soc=target_soc,
+        )
+
+    @staticmethod
+    def estimate_energy_required(
+        db: Session,
+        user: User,
+        vehicle_id: int,
+        target_soc: int = 80,
+    ) -> EnergyEstimateResponse:
+        """Estimate energy required using the owned vehicle's battery capacity."""
+        return domain_estimate_energy_required(
+            db=db,
+            user=user,
+            vehicle_id=vehicle_id,
             target_soc=target_soc,
         )
 

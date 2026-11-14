@@ -4,7 +4,7 @@ FastAPI backend for **ChargeSlot — EV Charging Station Finder with Slot Dashbo
 
 ## Feature Overview: Battery Input and Charging Estimates (CS19-055 / CS19-056 / CS19-061)
 
-Allows authenticated EV drivers to enter their vehicle's battery level as an integer percentage (0 to 100%) and estimate charging time and cost from the saved SoC, target SoC, battery capacity, effective charger power, and station tariff. Charging-time estimates include the 15-minute slot duration rounded up from the calculated charging time.
+Allows authenticated EV drivers to enter their vehicle's battery level as an integer percentage (0 to 100%) and estimate required energy, charging time, and cost from the saved SoC, target SoC, battery capacity, effective charger power, and station tariff. Charging-time estimates include the 15-minute slot duration rounded up from the calculated charging time.
 
 ### Requirements & Traceability
 - **Story ID:** CS19-055
@@ -106,6 +106,19 @@ Battery-level and target percentages are integer values from 0 to 100; fractiona
 Estimated minutes = energy required (kWh) / effective charging power (kW) × 60.
 
 The response includes `slot_length_minutes`, rounded up to the next 15-minute boundary (for example, 54 minutes requires a 60-minute slot; 0 minutes remains 0).
+
+### Energy Estimate (REQ-F3-06 / CS19-060)
+- **Method:** `POST`
+- **Path:** `/api/v1/bookings/energy-estimate`
+- **Auth:** Bearer Token (Driver or Admin)
+- **Request Body:**
+```json
+{
+  "vehicle_id": 1,
+  "target_soc": 80
+}
+```
+The vehicle must belong to the authenticated driver and have a saved battery level. The estimate uses the vehicle battery capacity and existing 90% charging-efficiency rule. The response includes current and target SoC, capacity, and required energy in kWh. If the vehicle is already at or above the target, required energy is zero.
 
 ### Charging Cost Estimate (REQ-F3-09 / CS19-063)
 - **Method:** `POST`

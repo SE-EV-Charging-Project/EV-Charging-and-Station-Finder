@@ -422,6 +422,66 @@ def test_tc_f3_07_charging_time_uses_effective_vehicle_and_charger_power(
     assert ac_response.json()["slot_length_minutes"] == 225
 
 
+def test_tc_f3_06_energy_estimate_uses_owned_vehicle_battery_capacity(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+    bob_vehicle: Vehicle,
+):
+    alice_vehicle.current_soc = 20
+    db_session.commit()
+    headers = {"Authorization": f"Bearer {make_token(driver_alice)}"}
+    payload = {"vehicle_id": alice_vehicle.id, "target_soc": 80}
+
+    response = client.post(
+        "/api/v1/bookings/energy-estimate",
+        json=payload,
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "vehicle_id": alice_vehicle.id,
+        "current_soc": 20,
+        "target_soc": 80,
+        "battery_capacity_kwh": 40.5,
+        "energy_required_kwh": 27.0,
+        "message": "Energy estimate calculated successfully.",
+    }
+
+    zero_energy_response = client.post(
+        "/api/v1/bookings/energy-estimate",
+        json={"vehicle_id": alice_vehicle.id, "target_soc": 20},
+        headers=headers,
+    )
+    assert zero_energy_response.status_code == 200
+    assert zero_energy_response.json()["energy_required_kwh"] == 0.0
+
+    foreign_vehicle_response = client.post(
+        "/api/v1/bookings/energy-estimate",
+        json={"vehicle_id": bob_vehicle.id, "target_soc": 80},
+        headers=headers,
+    )
+    assert foreign_vehicle_response.status_code == 403
+
+    invalid_target_response = client.post(
+        "/api/v1/bookings/energy-estimate",
+        json={"vehicle_id": alice_vehicle.id, "target_soc": 101},
+        headers=headers,
+    )
+    assert invalid_target_response.status_code == 422
+
+    alice_vehicle.current_soc = None
+    db_session.commit()
+    missing_soc_response = client.post(
+        "/api/v1/bookings/energy-estimate",
+        json=payload,
+        headers=headers,
+    )
+    assert missing_soc_response.status_code == 422
+
+
 def test_tc_f3_09_cost_estimate_uses_station_tariff_and_checks_ownership(
     client: TestClient,
     db_session: Session,
