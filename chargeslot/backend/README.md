@@ -147,6 +147,20 @@ The manual booking request must identify the station, charger, owned vehicle, st
 
 The request uses the same fields as manual booking. A successful response creates a `Held` booking and includes `hold_expires_at`, exactly five minutes after the hold is created. Expired holds no longer block a slot; payment processing is handled by the payment integration.
 
+### Modify a Confirmed Booking (REQ-F3-23 / CS19-077)
+- **Method:** `PATCH`
+- **Path:** `/api/v1/bookings/{booking_id}`
+- **Auth:** Bearer Token (booking owner or Admin)
+
+The request contains a compatible `charger_id` and a new `start_time`. Only confirmed bookings can be changed, and the original booking must start at least 30 minutes in the future. The new slot must remain at the booking's station and pass the same availability, maintenance, charger, and vehicle-overlap checks as a new booking.
+
+### Cancel a Booking (REQ-F3-24 / CS19-078)
+- **Method:** `POST`
+- **Path:** `/api/v1/bookings/{booking_id}/cancel`
+- **Auth:** Bearer Token (booking owner or Admin)
+
+Held and confirmed bookings can be cancelled before they start. Confirmed bookings cancelled at least 30 minutes before start incur no fee; later cancellations record a fee equal to 10% of estimated charging cost, rounded to INR paise. A station tariff and stored energy estimate are required to calculate a late fee. The response records the amount due; collection is left to the payment integration.
+
 ## Running Tests
 
 Execute unit and integration tests using pytest:

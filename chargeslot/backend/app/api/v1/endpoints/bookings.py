@@ -1,6 +1,6 @@
 from datetime import date
 
-from fastapi import APIRouter, Depends, Request, status, Query
+from fastapi import APIRouter, Depends, Path, Request, status, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -10,6 +10,9 @@ from app.schemas.booking import (
     BatteryLevelInputRequest,
     BatteryLevelResponse,
     BatteryRulesResponse,
+    BookingCancellationResponse,
+    BookingModificationRequest,
+    BookingModificationResponse,
     ChargingCostEstimateRequest,
     ChargingCostEstimateResponse,
     ChargingTimeEstimateRequest,
@@ -206,5 +209,52 @@ def post_slot_hold(
         charger_id=payload.charger_id,
         start_time=payload.start_time,
         target_soc=payload.target_soc,
+        ip_address=client_ip,
+    )
+
+
+@router.patch(
+    "/{booking_id}",
+    response_model=BookingModificationResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Modify a confirmed booking",
+    description="Changes a booking's time and charger at least 30 minutes before its start (REQ-F3-23 / CS19-077).",
+)
+def patch_booking(
+    payload: BookingModificationRequest,
+    request: Request,
+    booking_id: int = Path(..., gt=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> BookingModificationResponse:
+    client_ip = request.client.host if request.client else None
+    return BookingService.modify_confirmed_booking(
+        db=db,
+        user=current_user,
+        booking_id=booking_id,
+        charger_id=payload.charger_id,
+        start_time=payload.start_time,
+        ip_address=client_ip,
+    )
+
+
+@router.post(
+    "/{booking_id}/cancel",
+    response_model=BookingCancellationResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Cancel a booking",
+    description="Cancels an owned booking and applies a 10% estimated-cost fee less than 30 minutes before its start (REQ-F3-24 / CS19-078).",
+)
+def post_cancel_booking(
+    request: Request,
+    booking_id: int = Path(..., gt=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> BookingCancellationResponse:
+    client_ip = request.client.host if request.client else None
+    return BookingService.cancel_booking(
+        db=db,
+        user=current_user,
+        booking_id=booking_id,
         ip_address=client_ip,
     )

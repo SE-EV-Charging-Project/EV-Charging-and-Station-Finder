@@ -10,7 +10,6 @@ from datetime import datetime, time, timedelta, timezone
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.booking.battery import (
@@ -23,6 +22,7 @@ from app.booking.battery import (
     enter_battery_level,
     get_vehicle_battery,
 )
+from app.booking.slots import _add_slot_claims
 from app.booking.validators import validate_battery_level_input, get_battery_rules
 from app.models.audit import AuditLog
 from app.models.user import User, UserRole
@@ -798,20 +798,9 @@ def test_tc_f3_13_database_claim_prevents_duplicate_charger_intervals(
     )
     db_session.add(duplicate_booking)
     db_session.flush()
-    db_session.add(
-        BookingSlotClaim(
-            charger_id=alice_charger.id,
-            slot_start_time=slot_start,
-            vehicle_id=alice_vehicle.id,
-            booking_id=duplicate_booking.id,
-        )
-    )
-    with pytest.raises(
-        IntegrityError,
-        match="booking_slot_claims.(charger_id|vehicle_id)",
-    ):
-        db_session.commit()
-    db_session.rollback()
+    with pytest.raises(HTTPException) as duplicate_claim_error:
+        _add_slot_claims(db_session, duplicate_booking)
+    assert duplicate_claim_error.value.status_code == 409
 
     second_charger = Charger(
         station_id=alice_station.id,
@@ -837,20 +826,9 @@ def test_tc_f3_13_database_claim_prevents_duplicate_charger_intervals(
     )
     db_session.add(second_booking)
     db_session.flush()
-    db_session.add(
-        BookingSlotClaim(
-            charger_id=second_charger.id,
-            slot_start_time=slot_start,
-            vehicle_id=alice_vehicle.id,
-            booking_id=second_booking.id,
-        )
-    )
-    with pytest.raises(
-        IntegrityError,
-        match="booking_slot_claims.vehicle_id",
-    ):
-        db_session.commit()
-    db_session.rollback()
+    with pytest.raises(HTTPException) as vehicle_claim_error:
+        _add_slot_claims(db_session, second_booking)
+    assert vehicle_claim_error.value.status_code == 409
 
 
 def test_tc_f3_14_vehicle_cannot_book_overlapping_slot_on_another_charger(
@@ -934,6 +912,292 @@ def test_tc_f3_14_vehicle_cannot_book_overlapping_slot_on_another_charger(
         <= slot_start
         for item in recommendation_response.json()["items"]
     )
+
+
+def test_tc_f3_23_modify_confirmed_booking_before_cutoff(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+    alice_station: Station,
+    alice_charger: Charger,
+    alice_connector: Connector,
+):
+    alice_vehicle.current_soc = 20
+    slot_start = datetime.combine(
+        datetime.now(timezone.utc).date() + timedelta(days=1),
+        time(9, 0),
+        tzinfo=timezone.utc,
+    )
+    booking = Booking(
+        user_id=driver_alice.id,
+        vehicle_id=alice_vehicle.id,
+        station_id=alice_station.id,
+        charger_id=alice_charger.id,
+        start_soc=20,
+        target_soc=80,
+        est_energy_kwh=27.0,
+        est_duration_min=60,
+        status=BookingStatus.CONFIRMED,
+        start_time=slot_start,
+        end_time=slot_start + timedelta(hours=1),
+    )
+    db_session.add(booking)
+    db_session.commit()
+    db_session.refresh(booking)
+
+    new_start = slot_start + timedelta(hours=1)
+    response = client.patch(
+        f"/api/v1/bookings/{booking.id}",
+        json={
+            "charger_id": alice_charger.id,
+            "start_time": new_start.isoformat(),
+        },
+        headers={"Authorization": f"Bearer {make_token(driver_alice)}"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == BookingStatus.CONFIRMED.value
+    assert datetime.fromisoformat(data["start_time"].replace("Z", "+00:00")) == new_start
+    assert datetime.fromisoformat(data["end_time"].replace("Z", "+00:00")) == (
+        new_start + timedelta(hours=1)
+    )
+    claims = (
+        db_session.query(BookingSlotClaim)
+        .filter(BookingSlotClaim.booking_id == booking.id)
+        .all()
+    )
+    assert len(claims) == 4
+    assert all(claim.slot_start_time.hour == 10 for claim in claims)
+
+
+def test_tc_f3_23_modify_booking_checks_owner_and_thirty_minute_cutoff(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    driver_bob: User,
+    alice_vehicle: Vehicle,
+    alice_station: Station,
+    alice_charger: Charger,
+):
+    slot_start = datetime.now(timezone.utc) + timedelta(days=1)
+    booking = Booking(
+        user_id=driver_alice.id,
+        vehicle_id=alice_vehicle.id,
+        station_id=alice_station.id,
+        charger_id=alice_charger.id,
+        start_soc=20,
+        target_soc=80,
+        est_energy_kwh=27.0,
+        est_duration_min=60,
+        status=BookingStatus.CONFIRMED,
+        start_time=slot_start,
+        end_time=slot_start + timedelta(hours=1),
+    )
+    db_session.add(booking)
+    db_session.commit()
+    payload = {
+        "charger_id": alice_charger.id,
+        "start_time": (slot_start + timedelta(hours=1)).isoformat(),
+    }
+
+    foreign_response = client.patch(
+        f"/api/v1/bookings/{booking.id}",
+        json=payload,
+        headers={"Authorization": f"Bearer {make_token(driver_bob)}"},
+    )
+    assert foreign_response.status_code == 403
+
+    booking.start_time = datetime.now(timezone.utc) + timedelta(minutes=20)
+    booking.end_time = booking.start_time + timedelta(hours=1)
+    db_session.commit()
+    cutoff_response = client.patch(
+        f"/api/v1/bookings/{booking.id}",
+        json=payload,
+        headers={"Authorization": f"Bearer {make_token(driver_alice)}"},
+    )
+    assert cutoff_response.status_code == 409
+
+
+def test_tc_f3_24_early_cancellation_is_free_and_releases_slot_claims(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    driver_bob: User,
+    alice_vehicle: Vehicle,
+    alice_station: Station,
+    alice_charger: Charger,
+):
+    slot_start = datetime.combine(
+        datetime.now(timezone.utc).date() + timedelta(days=1),
+        time(9, 0),
+        tzinfo=timezone.utc,
+    )
+    booking = Booking(
+        user_id=driver_alice.id,
+        vehicle_id=alice_vehicle.id,
+        station_id=alice_station.id,
+        charger_id=alice_charger.id,
+        start_soc=20,
+        target_soc=80,
+        est_energy_kwh=27.0,
+        est_duration_min=60,
+        status=BookingStatus.CONFIRMED,
+        start_time=slot_start,
+        end_time=slot_start + timedelta(hours=1),
+    )
+    db_session.add(booking)
+    db_session.flush()
+    db_session.add_all(
+        BookingSlotClaim(
+            charger_id=alice_charger.id,
+            slot_start_time=slot_start + timedelta(minutes=15 * index),
+            vehicle_id=alice_vehicle.id,
+            booking_id=booking.id,
+        )
+        for index in range(4)
+    )
+    db_session.commit()
+
+    url = f"/api/v1/bookings/{booking.id}/cancel"
+    foreign_response = client.post(
+        url,
+        headers={"Authorization": f"Bearer {make_token(driver_bob)}"},
+    )
+    assert foreign_response.status_code == 403
+
+    response = client.post(
+        url,
+        headers={"Authorization": f"Bearer {make_token(driver_alice)}"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == BookingStatus.CANCELLED.value
+    assert data["cancellation_fee_amount"] == 0.0
+    assert data["is_late_cancellation"] is False
+    assert (
+        db_session.query(BookingSlotClaim)
+        .filter(BookingSlotClaim.booking_id == booking.id)
+        .count()
+        == 0
+    )
+
+
+def test_tc_f3_24_late_cancellation_fee_is_ten_percent_of_estimated_cost(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+    alice_station: Station,
+    alice_charger: Charger,
+):
+    booking = Booking(
+        user_id=driver_alice.id,
+        vehicle_id=alice_vehicle.id,
+        station_id=alice_station.id,
+        charger_id=alice_charger.id,
+        start_soc=20,
+        target_soc=80,
+        est_energy_kwh=27.0,
+        est_duration_min=60,
+        status=BookingStatus.CONFIRMED,
+        start_time=datetime.now(timezone.utc) + timedelta(minutes=20),
+        end_time=datetime.now(timezone.utc) + timedelta(minutes=80),
+    )
+    db_session.add(booking)
+    db_session.commit()
+
+    response = client.post(
+        f"/api/v1/bookings/{booking.id}/cancel",
+        headers={"Authorization": f"Bearer {make_token(driver_alice)}"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == BookingStatus.CANCELLED.value
+    assert data["is_late_cancellation"] is True
+    assert data["cancellation_fee_amount"] == 22.95
+    db_session.refresh(booking)
+    assert booking.cancellation_fee_amount == 22.95
+
+
+def test_tc_f3_24_late_cancellation_requires_tariff_to_calculate_fee(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+    alice_station: Station,
+    alice_charger: Charger,
+):
+    alice_station.price_per_kwh = None
+    booking = Booking(
+        user_id=driver_alice.id,
+        vehicle_id=alice_vehicle.id,
+        station_id=alice_station.id,
+        charger_id=alice_charger.id,
+        start_soc=20,
+        target_soc=80,
+        est_energy_kwh=27.0,
+        est_duration_min=60,
+        status=BookingStatus.CONFIRMED,
+        start_time=datetime.now(timezone.utc) + timedelta(minutes=20),
+        end_time=datetime.now(timezone.utc) + timedelta(minutes=80),
+    )
+    db_session.add(booking)
+    db_session.commit()
+
+    response = client.post(
+        f"/api/v1/bookings/{booking.id}/cancel",
+        headers={"Authorization": f"Bearer {make_token(driver_alice)}"},
+    )
+
+    assert response.status_code == 409
+    db_session.refresh(booking)
+    assert booking.status == BookingStatus.CONFIRMED
+
+
+def test_tc_f3_24_cancellation_exactly_thirty_minutes_before_is_free(
+    client: TestClient,
+    db_session: Session,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+    alice_station: Station,
+    alice_charger: Charger,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fixed_now = datetime(2026, 11, 12, 8, 0, tzinfo=timezone.utc)
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now if tz is not None else fixed_now.replace(tzinfo=None)
+
+    monkeypatch.setattr("app.booking.slots.datetime", FrozenDateTime)
+    booking = Booking(
+        user_id=driver_alice.id,
+        vehicle_id=alice_vehicle.id,
+        station_id=alice_station.id,
+        charger_id=alice_charger.id,
+        start_soc=20,
+        target_soc=80,
+        est_energy_kwh=27.0,
+        est_duration_min=60,
+        status=BookingStatus.CONFIRMED,
+        start_time=fixed_now + timedelta(minutes=30),
+        end_time=fixed_now + timedelta(minutes=90),
+    )
+    db_session.add(booking)
+    db_session.commit()
+
+    response = client.post(
+        f"/api/v1/bookings/{booking.id}/cancel",
+        headers={"Authorization": f"Bearer {make_token(driver_alice)}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["is_late_cancellation"] is False
+    assert response.json()["cancellation_fee_amount"] == 0.0
 
 
 def test_tc_f3_07_charging_time_requires_owned_vehicle_and_saved_battery_level(

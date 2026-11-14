@@ -21,10 +21,12 @@ from app.models.booking_slot_claim import BookingSlotClaim
 from app.models.charger import Charger, Connector, ConnectorStatus, CurrentType
 from app.models.maintenance import MaintenanceWindow
 from app.models.station import Station, StationStatus
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
 from app.schemas.booking import (
     ManualSlotBookingResponse,
+    BookingModificationResponse,
+    BookingCancellationResponse,
     RecommendedSlotItem,
     RecommendedSlotsResponse,
     SlotHoldResponse,
@@ -191,6 +193,38 @@ def _slot_claims_for_booking(booking: Booking) -> list[BookingSlotClaim]:
     return claims
 
 
+def _add_slot_claims(db: Session, booking: Booking) -> None:
+    db.add_all(_slot_claims_for_booking(booking))
+    try:
+        db.flush()
+    except IntegrityError as error:
+        db.rollback()
+        message = str(error.orig)
+        postgres_constraint = getattr(
+            getattr(error.orig, "diag", None),
+            "constraint_name",
+            None,
+        )
+        if (
+            postgres_constraint in {
+                "uq_booking_slot_claim_charger_start",
+                "uq_booking_slot_claim_vehicle_start",
+            }
+            or "booking_slot_claims.charger_id, booking_slot_claims.slot_start_time"
+            in message
+            or "booking_slot_claims.vehicle_id, booking_slot_claims.slot_start_time"
+            in message
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Selected slot was just booked by another request, or the vehicle "
+                    "already has an overlapping booking."
+                ),
+            ) from error
+        raise
+
+
 def _candidate_slots(
     db: Session,
     user: User,
@@ -198,6 +232,7 @@ def _candidate_slots(
     target_soc: int,
     slot_date: date,
     station_id: int | None = None,
+    exclude_booking_id: int | None = None,
 ) -> list[RecommendedSlotItem]:
     vehicle, validated_target = _validate_estimate_inputs(
         db=db,
@@ -267,9 +302,7 @@ def _candidate_slots(
     for window in windows:
         windows_by_station.setdefault(window.station_id, []).append(window)
 
-    bookings = (
-        db.query(Booking)
-        .filter(
+    bookings_query = db.query(Booking).filter(
             Booking.station_id.in_(station_ids),
             Booking.status.in_(ACTIVE_BOOKING_STATUSES),
             or_(
@@ -280,11 +313,7 @@ def _candidate_slots(
             Booking.start_time < day_end,
             Booking.end_time > day_start,
         )
-        .all()
-    )
-    vehicle_bookings = (
-        db.query(Booking)
-        .filter(
+    vehicle_bookings_query = db.query(Booking).filter(
             Booking.vehicle_id == vehicle.id,
             Booking.status.in_(ACTIVE_BOOKING_STATUSES),
             or_(
@@ -295,8 +324,13 @@ def _candidate_slots(
             Booking.start_time < day_end,
             Booking.end_time > day_start,
         )
-        .all()
-    )
+    if exclude_booking_id is not None:
+        bookings_query = bookings_query.filter(Booking.id != exclude_booking_id)
+        vehicle_bookings_query = vehicle_bookings_query.filter(
+            Booking.id != exclude_booking_id
+        )
+    bookings = bookings_query.all()
+    vehicle_bookings = vehicle_bookings_query.all()
     bookings_by_station: dict[int, list[Booking]] = {}
     for booking in bookings:
         if booking.station_id is not None:
@@ -548,33 +582,7 @@ def _create_slot_booking(
     )
     db.add(booking)
     db.flush()
-    db.add_all(_slot_claims_for_booking(booking))
-    try:
-        db.flush()
-    except IntegrityError as error:
-        db.rollback()
-        message = str(error.orig)
-        postgres_constraint = getattr(
-            getattr(error.orig, "diag", None),
-            "constraint_name",
-            None,
-        )
-        if (
-            postgres_constraint == "uq_booking_slot_claim_charger_start"
-            or postgres_constraint == "uq_booking_slot_claim_vehicle_start"
-            or "booking_slot_claims.charger_id, booking_slot_claims.slot_start_time"
-            in message
-            or "booking_slot_claims.vehicle_id, booking_slot_claims.slot_start_time"
-            in message
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "Selected slot was just booked by another request, or the vehicle "
-                    "already has an overlapping booking."
-                ),
-            ) from error
-        raise
+    _add_slot_claims(db, booking)
     db.commit()
     db.refresh(booking)
 
@@ -668,4 +676,213 @@ def create_slot_hold(
         end_time=ensure_utc(booking.end_time),
         status=booking.status.value,
         hold_expires_at=ensure_utc(booking.hold_expires_at),
+    )
+
+
+def modify_confirmed_booking(
+    db: Session,
+    user: User,
+    booking_id: int,
+    charger_id: int,
+    start_time: datetime,
+    ip_address: str | None = None,
+) -> BookingModificationResponse:
+    booking = (
+        db.query(Booking)
+        .filter(Booking.id == booking_id)
+        .with_for_update()
+        .first()
+    )
+    if booking is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Booking with ID {booking_id} not found.",
+        )
+    if user.role not in (UserRole.DRIVER, UserRole.ADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only drivers and administrators can modify bookings.",
+        )
+    if user.role != UserRole.ADMIN and booking.user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to modify this booking.",
+        )
+    if booking.status != BookingStatus.CONFIRMED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only confirmed bookings can be modified.",
+        )
+    if booking.station_id is None or booking.vehicle_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This booking is missing station or vehicle information.",
+        )
+
+    now_utc = datetime.now(timezone.utc)
+    _release_stale_slot_claims(db, now_utc)
+    if ensure_utc(booking.start_time) - now_utc < timedelta(minutes=30):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bookings can only be modified at least 30 minutes before they start.",
+        )
+    vehicle = get_target_vehicle(db, user, booking.vehicle_id)
+    normalized_start = ensure_utc(start_time)
+    candidates = _candidate_slots(
+        db=db,
+        user=user,
+        vehicle_id=vehicle.id,
+        target_soc=booking.target_soc,
+        slot_date=normalized_start.date(),
+        station_id=booking.station_id,
+        exclude_booking_id=booking.id,
+    )
+    selected_slot = next(
+        (
+            item
+            for item in candidates
+            if item.charger_id == charger_id and item.start_time == normalized_start
+        ),
+        None,
+    )
+    if selected_slot is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Selected slot is outside operating hours, blocked, or already booked.",
+        )
+
+    db.query(BookingSlotClaim).filter(
+        BookingSlotClaim.booking_id == booking.id
+    ).delete(synchronize_session=False)
+    booking.charger_id = selected_slot.charger_id
+    booking.start_time = selected_slot.start_time
+    booking.end_time = selected_slot.end_time
+    booking.est_energy_kwh = selected_slot.energy_required_kwh
+    booking.est_duration_min = selected_slot.slot_length_minutes
+    db.flush()
+    _add_slot_claims(db, booking)
+    db.commit()
+    db.refresh(booking)
+
+    AuditService.log_action(
+        db=db,
+        user_id=user.id,
+        action="BOOKING_MODIFIED",
+        resource=f"Booking:{booking.id}",
+        details=(
+            f"Booking {booking.id} moved to charger {booking.charger_id} "
+            f"from {booking.start_time.isoformat()} to {booking.end_time.isoformat()}."
+        ),
+        ip_address=ip_address,
+    )
+    return BookingModificationResponse(
+        booking_id=booking.id,
+        station_id=booking.station_id,
+        charger_id=booking.charger_id,
+        vehicle_id=booking.vehicle_id,
+        start_time=ensure_utc(booking.start_time),
+        end_time=ensure_utc(booking.end_time),
+        status=booking.status.value,
+    )
+
+
+def cancel_booking(
+    db: Session,
+    user: User,
+    booking_id: int,
+    ip_address: str | None = None,
+) -> BookingCancellationResponse:
+    now_utc = datetime.now(timezone.utc)
+    booking = (
+        db.query(Booking)
+        .filter(Booking.id == booking_id)
+        .with_for_update()
+        .first()
+    )
+    if booking is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Booking with ID {booking_id} not found.",
+        )
+    if user.role not in (UserRole.DRIVER, UserRole.ADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only drivers and administrators can cancel bookings.",
+        )
+    if user.role != UserRole.ADMIN and booking.user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to cancel this booking.",
+        )
+    if booking.status not in (BookingStatus.HELD, BookingStatus.CONFIRMED):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only held or confirmed bookings can be cancelled.",
+        )
+    if ensure_utc(booking.start_time) <= now_utc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bookings cannot be cancelled after they start.",
+        )
+
+    is_late_cancellation = (
+        booking.status == BookingStatus.CONFIRMED
+        and ensure_utc(booking.start_time) - now_utc < timedelta(minutes=30)
+    )
+    fee_amount = 0.0
+    if is_late_cancellation:
+        station = (
+            db.query(Station)
+            .filter(Station.id == booking.station_id)
+            .first()
+            if booking.station_id is not None
+            else None
+        )
+        if (
+            station is None
+            or station.price_per_kwh is None
+            or booking.est_energy_kwh is None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "A station tariff and booking energy estimate are required to "
+                    "calculate the late cancellation fee."
+                ),
+            )
+        estimated_cost = compute_charging_cost(
+            booking.est_energy_kwh,
+            station.price_per_kwh,
+        )
+        fee_amount = round(estimated_cost * 0.10, 2)
+
+    booking.status = BookingStatus.CANCELLED
+    booking.cancellation_fee_amount = fee_amount
+    db.query(BookingSlotClaim).filter(
+        BookingSlotClaim.booking_id == booking.id
+    ).delete(synchronize_session=False)
+    db.commit()
+    db.refresh(booking)
+
+    AuditService.log_action(
+        db=db,
+        user_id=user.id,
+        action="BOOKING_CANCELLED",
+        resource=f"Booking:{booking.id}",
+        details=(
+            f"Booking {booking.id} cancelled with a fee of INR {fee_amount:.2f}."
+        ),
+        ip_address=ip_address,
+    )
+    message = (
+        "Booking cancelled; the late cancellation fee is due."
+        if is_late_cancellation
+        else "Booking cancelled without a fee."
+    )
+    return BookingCancellationResponse(
+        booking_id=booking.id,
+        status=booking.status.value,
+        cancellation_fee_amount=fee_amount,
+        is_late_cancellation=is_late_cancellation,
+        message=message,
     )

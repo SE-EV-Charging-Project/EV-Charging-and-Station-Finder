@@ -53,6 +53,11 @@ class Booking(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    cancellation_fee_amount: Mapped[float] = mapped_column(
+        Float,
+        default=0.0,
+        nullable=False,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
