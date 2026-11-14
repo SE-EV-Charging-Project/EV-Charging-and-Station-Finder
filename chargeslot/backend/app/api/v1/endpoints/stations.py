@@ -27,6 +27,8 @@ from app.schemas.station import (
 )
 from app.dashboard.timeline import get_station_slot_timeline
 from app.dashboard.wait import get_station_estimated_wait_time
+from app.navigation.routes import calculate_route_preview
+from app.schemas.navigation import RoutePreviewResponse
 from app.stations.slots import (
     MAX_SLOT_DAYS_AHEAD,
     MIN_SLOT_DAYS_AHEAD,
@@ -983,6 +985,43 @@ def get_estimated_wait_time(
     )
 
 
+# ---------------------------------------------------------------------------
+# Route Preview Query Endpoint (REQ-F2-25 / CS19-051)
+# Must appear before /{station_id} to avoid FastAPI routing collision
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/route-preview",
+    response_model=RoutePreviewResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display route preview to station (SW Architecture Route)",
+    description=(
+        "Displays a route preview from the driver's location to a station, showing "
+        "the route, road distance and estimated travel time with current traffic (REQ-F2-25 / CS19-051)."
+    ),
+)
+def get_station_route_preview(
+    station_id: int = Query(..., description="Target station ID"),
+    latitude: float = Query(..., description="Driver origin latitude [-90.0, 90.0]"),
+    longitude: float = Query(..., description="Driver origin longitude [-180.0, 180.0]"),
+    traffic_condition: str | None = Query(
+        default=None,
+        description="Optional traffic condition: low, normal, heavy, severe",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RoutePreviewResponse:
+    return calculate_route_preview(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        origin_latitude=latitude,
+        origin_longitude=longitude,
+        traffic_condition=traffic_condition,
+    )
+
+
 @router.get(
     "/{station_id}",
     response_model=StationResponse,
@@ -1329,6 +1368,49 @@ def get_station_wait_time_by_id(
         vehicle_id=vehicle_id,
         connector_type=connector_type,
     )
+
+
+# ---------------------------------------------------------------------------
+# Route Preview Path Endpoints (REQ-F2-25 / CS19-051)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{station_id}/route-preview",
+    response_model=RoutePreviewResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display route preview to station (path route)",
+    description=(
+        "Displays a route preview from the driver's location to a station, showing "
+        "the route, road distance and estimated travel time with current traffic (REQ-F2-25 / CS19-051)."
+    ),
+)
+@router.get(
+    "/{station_id}/preview",
+    response_model=RoutePreviewResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def get_station_route_preview_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    latitude: float = Query(..., description="Driver origin latitude [-90.0, 90.0]"),
+    longitude: float = Query(..., description="Driver origin longitude [-180.0, 180.0]"),
+    traffic_condition: str | None = Query(
+        default=None,
+        description="Optional traffic condition: low, normal, heavy, severe",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RoutePreviewResponse:
+    return calculate_route_preview(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        origin_latitude=latitude,
+        origin_longitude=longitude,
+        traffic_condition=traffic_condition,
+    )
+
 
 
 
