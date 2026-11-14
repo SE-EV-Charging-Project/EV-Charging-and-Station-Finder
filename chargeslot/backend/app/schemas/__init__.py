@@ -151,6 +151,11 @@ from app.schemas.navigation import (
     TrafficCondition,
     RouteWaypoint,
     RoutePreviewResponse,
+    NavigationAppType,
+    NavigationHandoffResponse,
+    ETASlotStatus,
+    RescheduleSlotOption,
+    ETASlotCheckResponse,
 )
 
 __all__ = [
@@ -281,4 +286,9 @@ __all__ = [
     "TrafficCondition",
     "RouteWaypoint",
     "RoutePreviewResponse",
+    "NavigationAppType",
+    "NavigationHandoffResponse",
+    "ETASlotStatus",
+    "RescheduleSlotOption",
+    "ETASlotCheckResponse",
 ]

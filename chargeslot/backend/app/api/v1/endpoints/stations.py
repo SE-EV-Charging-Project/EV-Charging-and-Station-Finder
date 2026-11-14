@@ -28,7 +28,13 @@ from app.schemas.station import (
 from app.dashboard.timeline import get_station_slot_timeline
 from app.dashboard.wait import get_station_estimated_wait_time
 from app.navigation.routes import calculate_route_preview
-from app.schemas.navigation import RoutePreviewResponse
+from app.navigation.handoff import generate_navigation_handoff
+from app.navigation.eta import check_driver_eta_versus_slot, DEFAULT_GRACE_PERIOD_MINUTES
+from app.schemas.navigation import (
+    RoutePreviewResponse,
+    NavigationHandoffResponse,
+    ETASlotCheckResponse,
+)
 from app.stations.slots import (
     MAX_SLOT_DAYS_AHEAD,
     MIN_SLOT_DAYS_AHEAD,
@@ -1022,6 +1028,95 @@ def get_station_route_preview(
     )
 
 
+# ---------------------------------------------------------------------------
+# Navigation Hand-off Query Endpoint (REQ-F2-26 / CS19-052)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/navigation-hand-off",
+    response_model=NavigationHandoffResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Generate navigation deep links to station (SW Architecture Route)",
+    description=(
+        "Allows driver to start turn-by-turn navigation in external navigation apps "
+        "through deep links (Google Maps, Apple Maps, Waze, and geo: URI) (REQ-F2-26 / CS19-052)."
+    ),
+)
+def get_station_navigation_handoff(
+    station_id: int = Query(..., description="Target station ID"),
+    app_type: str | None = Query(
+        default=None,
+        description="Optional app type: google_maps, apple_maps, waze, generic_geo",
+    ),
+    origin_latitude: float | None = Query(
+        default=None,
+        description="Optional driver origin latitude [-90.0, 90.0]",
+    ),
+    origin_longitude: float | None = Query(
+        default=None,
+        description="Optional driver origin longitude [-180.0, 180.0]",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> NavigationHandoffResponse:
+    return generate_navigation_handoff(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        app_type=app_type,
+        origin_latitude=origin_latitude,
+        origin_longitude=origin_longitude,
+    )
+
+
+# ---------------------------------------------------------------------------
+# ETA versus Slot Check Query Endpoint (REQ-F2-27 / CS19-053)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/eta-versus-slot-check",
+    response_model=ETASlotCheckResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Compare driver ETA with slot start time (SW Architecture Route)",
+    description=(
+        "Compares the driver's estimated arrival time with the slot start time for a confirmed booking. "
+        "Warns the driver and offers reschedule, extend, or cancel options when projected late (REQ-F2-27 / CS19-053)."
+    ),
+)
+def get_station_eta_versus_slot_check(
+    booking_id: int = Query(..., description="Target booking ID"),
+    latitude: float = Query(..., description="Driver origin latitude [-90.0, 90.0]"),
+    longitude: float = Query(..., description="Driver origin longitude [-180.0, 180.0]"),
+    traffic_condition: str | None = Query(
+        default=None,
+        description="Optional traffic condition: low, normal, heavy, severe",
+    ),
+    grace_period_minutes: int = Query(
+        default=DEFAULT_GRACE_PERIOD_MINUTES,
+        ge=0,
+        description="Grace period in minutes (default 15 per BR-06)",
+    ),
+    current_time: datetime | None = Query(
+        default=None,
+        description="Optional simulation evaluation timestamp",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ETASlotCheckResponse:
+    return check_driver_eta_versus_slot(
+        db=db,
+        user=current_user,
+        booking_id=booking_id,
+        driver_latitude=latitude,
+        driver_longitude=longitude,
+        traffic_condition=traffic_condition,
+        current_time=current_time,
+        grace_period_minutes=grace_period_minutes,
+    )
+
+
 @router.get(
     "/{station_id}",
     response_model=StationResponse,
@@ -1410,6 +1505,97 @@ def get_station_route_preview_by_id(
         origin_longitude=longitude,
         traffic_condition=traffic_condition,
     )
+
+
+# ---------------------------------------------------------------------------
+# Navigation Hand-off Path Endpoints (REQ-F2-26 / CS19-052)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{station_id}/navigation-hand-off",
+    response_model=NavigationHandoffResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Generate navigation deep links to station by path ID (REQ-F2-26)",
+    description="Path-based navigation hand-off deep link endpoint.",
+)
+@router.get(
+    "/{station_id}/handoff",
+    response_model=NavigationHandoffResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def get_station_navigation_handoff_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    app_type: str | None = Query(
+        default=None,
+        description="Optional app type: google_maps, apple_maps, waze, generic_geo",
+    ),
+    origin_latitude: float | None = Query(
+        default=None,
+        description="Optional driver origin latitude [-90.0, 90.0]",
+    ),
+    origin_longitude: float | None = Query(
+        default=None,
+        description="Optional driver origin longitude [-180.0, 180.0]",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> NavigationHandoffResponse:
+    return generate_navigation_handoff(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        app_type=app_type,
+        origin_latitude=origin_latitude,
+        origin_longitude=origin_longitude,
+    )
+
+
+# ---------------------------------------------------------------------------
+# ETA versus Slot Check Path Endpoints (REQ-F2-27 / CS19-053)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{station_id}/eta-versus-slot-check",
+    response_model=ETASlotCheckResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Compare driver ETA with slot start time for station booking (REQ-F2-27)",
+    description="Path-based ETA versus slot check endpoint for a station.",
+)
+def get_station_eta_versus_slot_check_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    booking_id: int = Query(..., description="Target booking ID"),
+    latitude: float = Query(..., description="Driver origin latitude [-90.0, 90.0]"),
+    longitude: float = Query(..., description="Driver origin longitude [-180.0, 180.0]"),
+    traffic_condition: str | None = Query(
+        default=None,
+        description="Optional traffic condition: low, normal, heavy, severe",
+    ),
+    grace_period_minutes: int = Query(
+        default=DEFAULT_GRACE_PERIOD_MINUTES,
+        ge=0,
+        description="Grace period in minutes (default 15 per BR-06)",
+    ),
+    current_time: datetime | None = Query(
+        default=None,
+        description="Optional simulation evaluation timestamp",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ETASlotCheckResponse:
+    return check_driver_eta_versus_slot(
+        db=db,
+        user=current_user,
+        booking_id=booking_id,
+        driver_latitude=latitude,
+        driver_longitude=longitude,
+        traffic_condition=traffic_condition,
+        current_time=current_time,
+        grace_period_minutes=grace_period_minutes,
+    )
+
 
 
 

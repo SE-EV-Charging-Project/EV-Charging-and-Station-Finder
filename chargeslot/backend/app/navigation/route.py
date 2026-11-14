@@ -1,7 +1,7 @@
 """
-Navigation Route Module (REQ-F2-25 / CS19-051).
+Navigation Route Module (REQ-F2-25 / REQ-F2-26 / REQ-F2-27).
 
-Re-exports route preview service functions from app.navigation.routes.
+Re-exports route preview, navigation handoff, and ETA service functions.
 """
 
 from app.navigation.routes import (
@@ -13,6 +13,16 @@ from app.navigation.routes import (
     TRAFFIC_SPEEDS_KMH,
     FREE_FLOW_SPEED_KMH,
 )
+from app.navigation.handoff import (
+    generate_navigation_handoff,
+    build_navigation_links,
+    normalize_app_type,
+)
+from app.navigation.eta import (
+    check_driver_eta_versus_slot,
+    find_reschedule_options,
+    DEFAULT_GRACE_PERIOD_MINUTES,
+)
 
 __all__ = [
     "calculate_route_preview",
@@ -22,5 +32,10 @@ __all__ = [
     "ROAD_DISTANCE_EXPANSION_FACTOR",
     "TRAFFIC_SPEEDS_KMH",
     "FREE_FLOW_SPEED_KMH",
+    "generate_navigation_handoff",
+    "build_navigation_links",
+    "normalize_app_type",
+    "check_driver_eta_versus_slot",
+    "find_reschedule_options",
+    "DEFAULT_GRACE_PERIOD_MINUTES",
 ]
-
