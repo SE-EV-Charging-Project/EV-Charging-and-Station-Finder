@@ -7,11 +7,16 @@ from app.dashboard.staleness import (
     DEFAULT_STALE_THRESHOLD_SECONDS,
     get_stale_connector_status_display,
 )
+from app.dashboard.state import (
+    DEFAULT_RESERVATION_WINDOW_MINUTES,
+    get_reserved_status_display,
+)
 from app.dashboard.views import get_live_connector_status_display
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.dashboard import (
     LiveConnectorStatusDisplayResponse,
+    ReservedStatusResponse,
     StaleStatusHandlingResponse,
 )
 
@@ -86,6 +91,125 @@ def display_stale_connector_status(
         connector_id=connector_id,
         stale_threshold_seconds=stale_threshold_seconds,
         stale_only=stale_only,
+    )
+
+
+@router.get(
+    "/stations/reserved-status",
+    response_model=ReservedStatusResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display connector reserved status for confirmed bookings starting within 15 minutes (SW Architecture Route)",
+    description=(
+        "Evaluates confirmed bookings starting within the next 15 minutes and displays "
+        "Reserved status for affected connectors (REQ-F2-21 / CS19-047)."
+    ),
+)
+def display_reserved_connector_status(
+    station_id: int | None = Query(default=None, description="Target station ID"),
+    connector_id: int | None = Query(default=None, description="Optional specific connector ID"),
+    window_minutes: int = Query(
+        default=DEFAULT_RESERVATION_WINDOW_MINUTES,
+        ge=1,
+        le=120,
+        description="Upcoming booking buffer in minutes to evaluate Reserved status (default 15m per REQ-F2-21)",
+    ),
+    reserved_only: bool = Query(
+        default=False,
+        description="Filter returned list to reserved connectors only",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ReservedStatusResponse:
+    return get_reserved_status_display(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=connector_id,
+        window_minutes=window_minutes,
+        reserved_only=reserved_only,
+    )
+
+
+@router.get(
+    "/stations/{station_id}/reserved-status",
+    response_model=ReservedStatusResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display connector reserved status for a station",
+    description="Path alias returning connector reserved status for a station (REQ-F2-21).",
+)
+def display_station_reserved_status(
+    station_id: int = Path(..., description="Target station ID"),
+    window_minutes: int = Query(
+        default=DEFAULT_RESERVATION_WINDOW_MINUTES,
+        ge=1,
+        le=120,
+        description="Upcoming booking buffer in minutes (default 15m)",
+    ),
+    reserved_only: bool = Query(default=False, description="Filter to reserved connectors only"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ReservedStatusResponse:
+    return get_reserved_status_display(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        window_minutes=window_minutes,
+        reserved_only=reserved_only,
+    )
+
+
+@router.get(
+    "/connectors/{connector_id}/reserved-status",
+    response_model=ReservedStatusResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display reserved status for a single connector",
+    description="Path alias returning reserved status for one connector (REQ-F2-21).",
+)
+def display_single_connector_reserved_status(
+    connector_id: int = Path(..., description="Target connector ID"),
+    window_minutes: int = Query(
+        default=DEFAULT_RESERVATION_WINDOW_MINUTES,
+        ge=1,
+        le=120,
+        description="Upcoming booking buffer in minutes (default 15m)",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ReservedStatusResponse:
+    return get_reserved_status_display(
+        db=db,
+        user=current_user,
+        connector_id=connector_id,
+        window_minutes=window_minutes,
+    )
+
+
+@router.get(
+    "/stations/{station_id}/chargers/{charger_id}/connectors/{connector_id}/reserved-status",
+    response_model=ReservedStatusResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Nested path alias to display reserved status for a specific connector",
+    description="Nested REST path alias to evaluate connector reserved status (REQ-F2-21).",
+)
+def display_nested_connector_reserved_status(
+    station_id: int = Path(..., description="Target station ID"),
+    charger_id: int = Path(..., description="Target charger ID"),
+    connector_id: int = Path(..., description="Target connector ID"),
+    window_minutes: int = Query(
+        default=DEFAULT_RESERVATION_WINDOW_MINUTES,
+        ge=1,
+        le=120,
+        description="Upcoming booking buffer in minutes (default 15m)",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ReservedStatusResponse:
+    return get_reserved_status_display(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=connector_id,
+        window_minutes=window_minutes,
     )
 
 

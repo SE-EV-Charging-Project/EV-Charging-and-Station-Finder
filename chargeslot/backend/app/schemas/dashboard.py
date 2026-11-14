@@ -98,3 +98,61 @@ class StaleStatusHandlingResponse(BaseModel):
     evaluated_at: datetime
     connectors: list[StaleConnectorStatusItem] = Field(default_factory=list)
 
+
+class ReservedConnectorStatusItem(BaseModel):
+    """
+    Connector status item reflecting reserved status when an active confirmed booking
+    starts within 15 minutes (REQ-F2-21 / CS19-047).
+    """
+
+    connector_id: int
+    charger_id: int
+    charger_name: str | None = None
+    station_id: int
+    station_name: str
+    gateway_id: str
+    connector_type: str
+    power_kw: float
+    current_type: str
+    raw_status: str
+    status: str
+    is_reserved: bool
+    reservation_window_minutes: int
+    booking_id: int | None = None
+    booking_user_id: int | None = None
+    booking_vehicle_id: int | None = None
+    booking_start_time: datetime | None = None
+    booking_end_time: datetime | None = None
+    minutes_until_booking: float | None = None
+    last_update: datetime | None = None
+    seconds_since_update: int = 0
+    is_active: bool
+    is_out_of_service: bool
+    out_of_service_reason: str | None = None
+    expected_return_time: datetime | None = None
+    latest_error_code: str | None = None
+
+
+class ReservedStatusResponse(BaseModel):
+    """
+    Station or connector reserved status summary evaluating confirmed bookings
+    starting within 15 minutes (REQ-F2-21 / CS19-047).
+    """
+
+    station_id: int
+    station_name: str
+    station_status: str
+    is_active: bool
+    reservation_window_minutes: int
+    total_connectors: int
+    reserved_connectors: int
+    available_connectors: int
+    occupied_connectors: int
+    faulted_connectors: int
+    offline_connectors: int
+    unknown_connectors: int = 0
+    last_status_update: datetime | None = None
+    evaluated_at: datetime
+    connectors: list[ReservedConnectorStatusItem] = Field(default_factory=list)
+
+

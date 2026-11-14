@@ -32,6 +32,12 @@ class Booking(Base):
 
     station_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     charger_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    connector_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("connectors.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     slot_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     start_soc: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
@@ -73,4 +79,5 @@ class Booking(Base):
 
     user = relationship("User", back_populates="bookings")
     vehicle = relationship("Vehicle", back_populates="bookings")
+    connector = relationship("Connector", foreign_keys=[connector_id])
     review = relationship("StationReview", back_populates="booking", uselist=False, cascade="all, delete-orphan")
