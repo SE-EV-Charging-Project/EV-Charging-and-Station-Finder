@@ -17,6 +17,8 @@ from app.schemas.booking import (
     ChargingCostEstimateResponse,
     ChargingTimeEstimateRequest,
     ChargingTimeEstimateResponse,
+    EnergyEstimateRequest,
+    EnergyEstimateResponse,
     ManualSlotBookingRequest,
     ManualSlotBookingResponse,
     RecommendedSlotsResponse,
@@ -89,6 +91,26 @@ def get_battery_rules() -> BatteryRulesResponse:
     return BatteryRulesResponse(
         rules=BookingService.get_battery_rules(),
         status="success",
+    )
+
+
+@router.post(
+    "/energy-estimate",
+    response_model=EnergyEstimateResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Estimate vehicle charging energy",
+    description="Estimates energy needed from the vehicle's saved current SoC to the requested target SoC using its battery capacity (REQ-F3-06 / CS19-060).",
+)
+def post_energy_estimate(
+    payload: EnergyEstimateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> EnergyEstimateResponse:
+    return BookingService.estimate_energy_required(
+        db=db,
+        user=current_user,
+        vehicle_id=payload.vehicle_id,
+        target_soc=payload.target_soc,
     )
 
 

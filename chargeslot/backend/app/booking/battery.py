@@ -17,6 +17,7 @@ from app.schemas.booking import (
     BatteryLevelResponse,
     ChargingCostEstimateResponse,
     ChargingTimeEstimateResponse,
+    EnergyEstimateResponse,
 )
 from app.services.audit_service import AuditService
 
@@ -70,6 +71,39 @@ def compute_energy_required(
         return 0.0
     delta_soc = float(target_soc - current_soc)
     return round((delta_soc / 100.0 * battery_kwh) / efficiency, 2)
+
+
+def estimate_energy_required(
+    db: Session,
+    user: User,
+    vehicle_id: int,
+    target_soc: int = 80,
+) -> EnergyEstimateResponse:
+    """Estimate energy needed to charge an owned vehicle to the requested SoC."""
+    vehicle = get_target_vehicle(db=db, user=user, vehicle_id=vehicle_id)
+    if vehicle.current_soc is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Enter the vehicle's current battery level before requesting an energy estimate.",
+        )
+
+    _, validated_target = validate_battery_level_input(
+        battery_level=vehicle.current_soc,
+        target_soc=target_soc,
+    )
+    energy_required_kwh = compute_energy_required(
+        battery_kwh=vehicle.battery_kwh,
+        current_soc=vehicle.current_soc,
+        target_soc=validated_target,
+    )
+    return EnergyEstimateResponse(
+        vehicle_id=vehicle.id,
+        current_soc=vehicle.current_soc,
+        target_soc=validated_target,
+        battery_capacity_kwh=vehicle.battery_kwh,
+        energy_required_kwh=energy_required_kwh,
+        message="Energy estimate calculated successfully.",
+    )
 
 
 def compute_charging_time_minutes(

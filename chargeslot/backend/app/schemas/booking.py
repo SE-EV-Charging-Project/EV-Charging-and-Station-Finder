@@ -110,6 +110,24 @@ class ChargingTimeEstimateRequest(BaseModel):
     target_soc: int = Field(default=80, ge=0, le=100, strict=True)
 
 
+class EnergyEstimateRequest(BaseModel):
+    """Request an energy estimate for an owned vehicle."""
+
+    vehicle_id: int = Field(..., gt=0)
+    target_soc: int = Field(default=80, ge=0, le=100, strict=True)
+
+
+class EnergyEstimateResponse(BaseModel):
+    """Estimated battery energy required to reach the target state of charge."""
+
+    vehicle_id: int
+    current_soc: int
+    target_soc: int
+    battery_capacity_kwh: float
+    energy_required_kwh: float
+    message: str
+
+
 class ChargingTimeEstimateResponse(BaseModel):
     """Estimated charge energy, effective power, and charging duration."""
 
