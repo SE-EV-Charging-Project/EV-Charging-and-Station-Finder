@@ -143,6 +143,13 @@ Recommendations include approved active stations and operational compatible char
 
 The manual booking request must identify the station, charger, owned vehicle, start time, and target SoC. The service rechecks connector compatibility and availability before creating a confirmed booking; unique database claims for each 15-minute charger and vehicle interval prevent concurrent requests from booking the same charger slot or overlapping the same vehicle. Overlapping, blocked, or out-of-hours choices return `409 Conflict`.
 
+### Vehicle-Compatible Station Filtering (REQ-F3-05 / CS19-059)
+- **Method:** `GET`
+- **Path:** `/api/v1/stations/filter-stations?vehicle_id=1`
+- **Auth:** Bearer Token (Driver or Admin)
+
+When `vehicle_id` is supplied, results require an operational charger with the same connector type and a positive vehicle power limit for that charger's current type (AC or DC). Each result includes `vehicle_compatible_max_power_kw`, the greatest effective rate across compatible chargers, capped at the vehicle's corresponding maximum. A charger rated above the vehicle limit remains compatible and reports the capped rate. Drivers may only filter with their own vehicles.
+
 ```json
 {
   "station_id": 2,

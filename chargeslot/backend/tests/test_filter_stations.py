@@ -360,6 +360,46 @@ def test_tc_f2_09_filter_by_vehicle_compatibility(
     assert res.status_code == 200
     names = [s["name"] for s in res.json()["stations"]]
     assert names == ["Mall Slow AC Point"]
+    station = res.json()["stations"][0]
+    assert station["vehicle_compatible_max_power_kw"] == 7.2
+
+
+def test_tc_f3_05_vehicle_filter_caps_power_and_rejects_unsupported_current(
+    client: TestClient,
+    db_session: Session,
+    driver_a: User,
+    vehicle_ccs2: Vehicle,
+    filter_test_stations: dict,
+):
+    token = make_token(driver_a)
+
+    vehicle_ccs2.max_dc_kw = 25.0
+    db_session.commit()
+    response = client.get(
+        f"/api/v1/stations/filter-stations?vehicle_id={vehicle_ccs2.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    stations = response.json()["stations"]
+    assert {station["name"] for station in stations} == {
+        "High Power Highway Hub",
+        "Downtown Busy Fast Point",
+    }
+    assert all(
+        station["vehicle_compatible_max_power_kw"] == 25.0
+        for station in stations
+    )
+
+    vehicle_ccs2.max_dc_kw = 0.0
+    db_session.commit()
+    response = client.get(
+        f"/api/v1/stations/filter-stations?vehicle_id={vehicle_ccs2.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["stations"] == []
 
 
 def test_tc_f2_09_combined_filters_via_post(
