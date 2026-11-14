@@ -147,6 +147,18 @@ from app.schemas.dashboard import (
     StaleStatusHandlingResponse,
 )
 
+from app.schemas.navigation import (
+    TrafficCondition,
+    RouteWaypoint,
+    RoutePreviewResponse,
+    NavigationAppType,
+    NavigationHandoffResponse,
+    ETASlotStatus,
+    RescheduleSlotOption,
+    ETASlotCheckResponse,
+    CachedRouteResponse,
+)
+
 __all__ = [
     "UserRegisterRequest",
     "UserLoginRequest",
@@ -272,4 +284,13 @@ __all__ = [
     "LiveConnectorStatusDisplayResponse",
     "StaleConnectorStatusItem",
     "StaleStatusHandlingResponse",
+    "TrafficCondition",
+    "RouteWaypoint",
+    "RoutePreviewResponse",
+    "NavigationAppType",
+    "NavigationHandoffResponse",
+    "ETASlotStatus",
+    "RescheduleSlotOption",
+    "ETASlotCheckResponse",
+    "CachedRouteResponse",
 ]

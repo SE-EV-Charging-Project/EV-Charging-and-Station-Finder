@@ -195,3 +195,80 @@ class StationApprovalGateActionRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=500, description="Rejection reason if action is 'reject'")
 
 
+class BookableSlotItem(BaseModel):
+    """
+    Represents an individual 15-minute bookable slot on a connector (REQ-F2-22 / CS19-048).
+    """
+    slot_id: str = Field(..., description="Unique deterministic slot identifier")
+    station_id: int
+    charger_id: int
+    charger_name: str | None = None
+    connector_id: int
+    connector_type: str
+    power_kw: float
+    current_type: str
+    start_time: datetime
+    end_time: datetime
+    duration_minutes: int = 15
+    is_available: bool
+    is_bookable: bool
+    is_booked: bool = False
+    is_maintenance: bool = False
+    is_past: bool = False
+    blocked_reason: str | None = None
+    booking_id: int | None = None
+    booking_status: str | None = None
+
+
+class ConnectorSlotsSummary(BaseModel):
+    """
+    Aggregated 15-minute slot schedule and metrics for a single connector (REQ-F2-22).
+    """
+    connector_id: int
+    connector_type: str
+    charger_id: int
+    charger_name: str | None = None
+    power_kw: float
+    current_type: str
+    is_operational: bool
+    total_slots: int
+    available_slots: int
+    booked_slots: int
+    blocked_slots: int
+    slots: list[BookableSlotItem] = Field(default_factory=list)
+
+
+class StationBookableSlotsResponse(BaseModel):
+    """
+    Generated bookable 15-minute slots for every connector up to 7 days ahead
+    (REQ-F2-22 / CS19-048 / SW Architecture route /stations/slot-generation).
+    """
+    station_id: int
+    station_name: str
+    operating_hours: str
+    slot_interval_minutes: int = 15
+    days_ahead: int
+    start_date: datetime | str
+    end_date: datetime | str
+    total_connectors: int
+    total_slots: int
+    total_available_slots: int
+    total_booked_slots: int
+    total_blocked_slots: int
+    connectors: list[ConnectorSlotsSummary] = Field(default_factory=list)
+    generated_at: datetime
+
+
+# Re-export slot timeline schemas (REQ-F2-23 / CS19-049)
+from app.schemas.dashboard import (
+    TimelineSlotState,
+    TimelineSlotItem,
+    ConnectorTimelineSummary,
+    StationSlotTimelineResponse,
+    CompatibleConnectorWaitItem,
+    EstimatedWaitTimeResponse,
+)
+
+
+
+

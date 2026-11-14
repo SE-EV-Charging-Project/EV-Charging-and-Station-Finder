@@ -391,12 +391,24 @@ def ingest_meter_value(
             status_code=status.HTTP_409_CONFLICT,
             detail="Meter readings can only be recorded for an active booking.",
         )
-    if len(active_bookings) != 1:
+    connector_bookings = [
+        booking for booking in active_bookings if booking.connector_id == connector.id
+    ]
+    unassigned_bookings = [
+        booking for booking in active_bookings if booking.connector_id is None
+    ]
+    matched_bookings = connector_bookings or unassigned_bookings
+    if not matched_bookings:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No active booking is assigned to the reported connector.",
+        )
+    if len(matched_bookings) != 1:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Meter reading cannot be associated with an unambiguous active booking.",
         )
-    booking = active_bookings[0]
+    booking = matched_bookings[0]
 
     if cleaned_idempotency is not None:
         existing_reading = (

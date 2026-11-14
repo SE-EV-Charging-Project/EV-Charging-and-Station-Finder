@@ -1,3 +1,4 @@
+import enum
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -117,3 +118,189 @@ class LiveSessionMonitorResponse(BaseModel):
     refresh_interval_seconds: int = 30
     retrieved_at: datetime
 
+
+class ReservedConnectorStatusItem(BaseModel):
+    """
+    Connector status item reflecting reserved status when an active confirmed booking
+    starts within 15 minutes (REQ-F2-21 / CS19-047).
+    """
+
+    connector_id: int
+    charger_id: int
+    charger_name: str | None = None
+    station_id: int
+    station_name: str
+    gateway_id: str
+    connector_type: str
+    power_kw: float
+    current_type: str
+    raw_status: str
+    status: str
+    is_reserved: bool
+    reservation_window_minutes: int
+    booking_id: int | None = None
+    booking_user_id: int | None = None
+    booking_vehicle_id: int | None = None
+    booking_start_time: datetime | None = None
+    booking_end_time: datetime | None = None
+    minutes_until_booking: float | None = None
+    last_update: datetime | None = None
+    seconds_since_update: int = 0
+    is_active: bool
+    is_out_of_service: bool
+    out_of_service_reason: str | None = None
+    expected_return_time: datetime | None = None
+    latest_error_code: str | None = None
+
+
+class ReservedStatusResponse(BaseModel):
+    """
+    Station or connector reserved status summary evaluating confirmed bookings
+    starting within 15 minutes (REQ-F2-21 / CS19-047).
+    """
+
+    station_id: int
+    station_name: str
+    station_status: str
+    is_active: bool
+    reservation_window_minutes: int
+    total_connectors: int
+    reserved_connectors: int
+    available_connectors: int
+    occupied_connectors: int
+    faulted_connectors: int
+    offline_connectors: int
+    unknown_connectors: int = 0
+    last_status_update: datetime | None = None
+    evaluated_at: datetime
+    connectors: list[ReservedConnectorStatusItem] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Slot Timeline View Schemas (REQ-F2-23 / CS19-049)
+# ---------------------------------------------------------------------------
+
+
+class TimelineSlotState(str, enum.Enum):
+    """
+    Slot timeline status enum per REQ-F2-23 / CS19-049:
+    Each 15-minute slot is shown as Free, Booked, Blocked or Past.
+    """
+
+    FREE = "Free"
+    BOOKED = "Booked"
+    BLOCKED = "Blocked"
+    PAST = "Past"
+
+
+class TimelineSlotItem(BaseModel):
+    """
+    Individual 15-minute slot item on the timeline (REQ-F2-23 / CS19-049).
+    """
+
+    slot_id: str
+    connector_id: int
+    charger_id: int
+    start_time: datetime
+    end_time: datetime
+    duration_minutes: int = 15
+    status: TimelineSlotState
+    is_available: bool = False
+    blocked_reason: str | None = None
+    booking_id: int | None = None
+    booking_status: str | None = None
+
+
+class ConnectorTimelineSummary(BaseModel):
+    """
+    Timeline summary for a single connector on a target date (REQ-F2-23).
+    """
+
+    connector_id: int
+    connector_type: str
+    charger_id: int
+    charger_name: str | None = None
+    power_kw: float
+    current_type: str
+    is_operational: bool
+    target_date: str
+    total_slots: int
+    free_slots: int
+    booked_slots: int
+    blocked_slots: int
+    past_slots: int
+    slots: list[TimelineSlotItem] = Field(default_factory=list)
+
+
+class StationSlotTimelineResponse(BaseModel):
+    """
+    Station slot timeline response displaying timeline per connector for a selected station and date
+    (REQ-F2-23 / CS19-049).
+    """
+
+    station_id: int
+    station_name: str
+    station_status: str
+    is_active: bool
+    operating_hours: str | None = None
+    target_date: str
+    slot_interval_minutes: int = 15
+    total_connectors: int
+    total_slots: int
+    total_free_slots: int
+    total_booked_slots: int
+    total_blocked_slots: int
+    total_past_slots: int
+    connectors: list[ConnectorTimelineSummary] = Field(default_factory=list)
+    generated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Estimated Wait Time Schemas (REQ-F2-24 / CS19-050)
+# ---------------------------------------------------------------------------
+
+
+class CompatibleConnectorWaitItem(BaseModel):
+    """
+    Connector status and active session info for wait time calculation (REQ-F2-24 / CS19-050).
+    """
+
+    connector_id: int
+    charger_id: int
+    charger_name: str | None = None
+    connector_type: str
+    power_kw: float
+    current_type: str
+    status: str
+    is_operational: bool
+    is_available: bool
+    is_occupied: bool
+    active_booking_id: int | None = None
+    session_start_time: datetime | None = None
+    expected_end_time: datetime | None = None
+    remaining_minutes: float | None = None
+
+
+class EstimatedWaitTimeResponse(BaseModel):
+    """
+    Estimated wait time response when all compatible connectors at a station are occupied
+    (REQ-F2-24 / CS19-050 / SW Architecture Route /stations/estimated-wait-time).
+    """
+
+    station_id: int
+    station_name: str
+    station_status: str
+    is_active: bool
+    vehicle_id: int | None = None
+    vehicle_connector_type: str | None = None
+    total_compatible_connectors: int
+    available_compatible_connectors: int
+    occupied_compatible_connectors: int
+    unavailable_connectors: int = 0
+    all_compatible_occupied: bool
+    estimated_wait_minutes: float | None = None
+    expected_available_at: datetime | None = None
+    earliest_free_connector_id: int | None = None
+    message: str
+    calculated_at: datetime
+    connectors: list[CompatibleConnectorWaitItem] = Field(default_factory=list)

@@ -107,6 +107,7 @@ def active_session(db_session):
         vehicle_id=vehicle.id,
         station_id=station.id,
         charger_id=charger.id,
+        connector_id=connector.id,
         start_soc=40,
         target_soc=80,
         status=BookingStatus.ACTIVE,
@@ -201,7 +202,7 @@ def test_monitor_reports_missing_and_stale_telemetry_without_fake_values(
     missing = client.get(monitor_url, headers=headers)
     assert missing.status_code == 200
     assert missing.json()["has_telemetry"] is False
-    assert missing.json()["connector_id"] is None
+    assert missing.json()["connector_id"] == active_session["connector"].id
     assert missing.json()["power_kw"] is None
     assert missing.json()["is_stale"] is True
 

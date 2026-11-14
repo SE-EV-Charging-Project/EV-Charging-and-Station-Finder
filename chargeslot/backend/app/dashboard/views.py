@@ -178,6 +178,7 @@ def get_live_connector_status_display(
     connector_id: int | None = None,
     status_filter: str | None = None,
     apply_stale_fallback: bool = False,
+    apply_reserved_status: bool = True,
 ) -> LiveConnectorStatusDisplayResponse:
     """
     Build the live connector status and last update display response for a station
@@ -237,6 +238,20 @@ def get_live_connector_status_display(
             )
             is_stale = False
             seconds_since = max(0, int((now_utc - last_update_utc).total_seconds()))
+
+        if apply_reserved_status and effective_status not in (
+            ConnectorStatus.OFFLINE.value,
+            ConnectorStatus.FAULTED.value,
+        ):
+            from app.dashboard.state import find_confirmed_booking_for_connector
+            is_res, _, _ = find_confirmed_booking_for_connector(
+                db=db,
+                connector=conn,
+                charger=charger,
+                now_utc=now_utc,
+            )
+            if is_res:
+                effective_status = ConnectorStatus.RESERVED.value
 
         counts[effective_status] = counts.get(effective_status, 0) + 1
         if last_status_update is None or last_update_utc > last_status_update:
@@ -366,7 +381,7 @@ def get_live_session_monitor(
     if latest is None:
         return LiveSessionMonitorResponse(
             booking_id=booking.id,
-            connector_id=None,
+            connector_id=booking.connector_id,
             charger_id=booking.charger_id,
             has_telemetry=False,
             cost_available=price_per_kwh is not None,

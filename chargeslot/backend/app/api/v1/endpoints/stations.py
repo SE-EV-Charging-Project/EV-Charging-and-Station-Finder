@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, Query, Request, status
+from datetime import date, datetime
+from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_operator, require_admin, get_current_user
@@ -20,6 +21,26 @@ from app.schemas.station import (
     StationApprovalResponse,
     StationApprovalGateStatusResponse,
     StationApprovalGateActionRequest,
+    StationBookableSlotsResponse,
+    StationSlotTimelineResponse,
+    EstimatedWaitTimeResponse,
+)
+from app.dashboard.timeline import get_station_slot_timeline
+from app.dashboard.wait import get_station_estimated_wait_time
+from app.navigation.routes import calculate_route_preview
+from app.navigation.handoff import generate_navigation_handoff
+from app.navigation.eta import check_driver_eta_versus_slot, DEFAULT_GRACE_PERIOD_MINUTES
+from app.navigation.cache import get_cached_route_preview
+from app.schemas.navigation import (
+    RoutePreviewResponse,
+    NavigationHandoffResponse,
+    ETASlotCheckResponse,
+    CachedRouteResponse,
+)
+from app.stations.slots import (
+    MAX_SLOT_DAYS_AHEAD,
+    MIN_SLOT_DAYS_AHEAD,
+    generate_station_bookable_slots,
 )
 from app.schemas.charger import (
     StationOutOfServiceMarkingRequest,
@@ -873,6 +894,283 @@ def get_station_paginated_search(
     )
 
 
+# ---------------------------------------------------------------------------
+# Slot Generation Query Endpoint (REQ-F2-22 / CS19-048)
+# Must appear before /{station_id} to avoid FastAPI routing collision
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/slot-generation",
+    response_model=StationBookableSlotsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Generate bookable 15-minute slots for connectors (SW Architecture Route)",
+    description="Generates 15-minute bookable slots for every connector up to 7 days ahead (REQ-F2-22 / CS19-048).",
+)
+def generate_slots(
+    station_id: int | None = Query(default=None, description="Station ID"),
+    connector_id: int | None = Query(default=None, description="Connector ID (station_id inferred if omitted)"),
+    days_ahead: int = Query(default=MAX_SLOT_DAYS_AHEAD, ge=1, le=MAX_SLOT_DAYS_AHEAD, description="Horizon in days (1..7)"),
+    target_date: date | None = Query(default=None, description="Optional single date filter (YYYY-MM-DD) within 7 days"),
+    available_only: bool = Query(default=False, description="Filter for bookable/available slots only"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationBookableSlotsResponse:
+    return generate_station_bookable_slots(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=connector_id,
+        days_ahead=days_ahead,
+        target_date=target_date,
+        available_only=available_only,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Slot Timeline Query Endpoint (REQ-F2-23 / CS19-049)
+# Must appear before /{station_id} to avoid FastAPI routing collision
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/slot-timeline",
+    response_model=StationSlotTimelineResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display slot timeline per connector (SW Architecture Route)",
+    description=(
+        "Displays, for a selected station and date, a slot timeline per connector in which "
+        "each 15-minute slot is shown as Free, Booked, Blocked or Past (REQ-F2-23 / CS19-049)."
+    ),
+)
+def get_slot_timeline(
+    station_id: int | None = Query(default=None, description="Station ID"),
+    connector_id: int | None = Query(default=None, description="Connector ID (station_id inferred if omitted)"),
+    target_date: date | None = Query(default=None, description="Target date (YYYY-MM-DD), defaults to today"),
+    status: str | None = Query(default=None, description="Filter slots by status: Free, Booked, Blocked, Past"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationSlotTimelineResponse:
+    return get_station_slot_timeline(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=connector_id,
+        target_date=target_date,
+        status_filter=status,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Estimated Wait Time Query Endpoint (REQ-F2-24 / CS19-050)
+# Must appear before /{station_id} to avoid FastAPI routing collision
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/estimated-wait-time",
+    response_model=EstimatedWaitTimeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display estimated wait time for station (SW Architecture Route)",
+    description=(
+        "Displays estimated wait time when all compatible connectors at a station are occupied, "
+        "calculated from the expected end of active sessions (REQ-F2-24 / CS19-050)."
+    ),
+)
+def get_estimated_wait_time(
+    station_id: int = Query(..., description="Target station ID"),
+    vehicle_id: int | None = Query(default=None, description="Optional vehicle ID to evaluate connector compatibility"),
+    connector_type: str | None = Query(default=None, description="Optional connector type filter (e.g. CCS2, Type 2, CHAdeMO, GB/T)"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> EstimatedWaitTimeResponse:
+    return get_station_estimated_wait_time(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        vehicle_id=vehicle_id,
+        connector_type=connector_type,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Route Preview Query Endpoint (REQ-F2-25 / CS19-051)
+# Must appear before /{station_id} to avoid FastAPI routing collision
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/route-preview",
+    response_model=RoutePreviewResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display route preview to station (SW Architecture Route)",
+    description=(
+        "Displays a route preview from the driver's location to a station, showing "
+        "the route, road distance and estimated travel time with current traffic (REQ-F2-25 / CS19-051)."
+    ),
+)
+def get_station_route_preview(
+    station_id: int = Query(..., description="Target station ID"),
+    latitude: float = Query(..., description="Driver origin latitude [-90.0, 90.0]"),
+    longitude: float = Query(..., description="Driver origin longitude [-180.0, 180.0]"),
+    traffic_condition: str | None = Query(
+        default=None,
+        description="Optional traffic condition: low, normal, heavy, severe",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RoutePreviewResponse:
+    return calculate_route_preview(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        origin_latitude=latitude,
+        origin_longitude=longitude,
+        traffic_condition=traffic_condition,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Navigation Hand-off Query Endpoint (REQ-F2-26 / CS19-052)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/navigation-hand-off",
+    response_model=NavigationHandoffResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Generate navigation deep links to station (SW Architecture Route)",
+    description=(
+        "Allows driver to start turn-by-turn navigation in external navigation apps "
+        "through deep links (Google Maps, Apple Maps, Waze, and geo: URI) (REQ-F2-26 / CS19-052)."
+    ),
+)
+def get_station_navigation_handoff(
+    station_id: int = Query(..., description="Target station ID"),
+    app_type: str | None = Query(
+        default=None,
+        description="Optional app type: google_maps, apple_maps, waze, generic_geo",
+    ),
+    origin_latitude: float | None = Query(
+        default=None,
+        description="Optional driver origin latitude [-90.0, 90.0]",
+    ),
+    origin_longitude: float | None = Query(
+        default=None,
+        description="Optional driver origin longitude [-180.0, 180.0]",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> NavigationHandoffResponse:
+    return generate_navigation_handoff(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        app_type=app_type,
+        origin_latitude=origin_latitude,
+        origin_longitude=origin_longitude,
+    )
+
+
+# ---------------------------------------------------------------------------
+# ETA versus Slot Check Query Endpoint (REQ-F2-27 / CS19-053)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/eta-versus-slot-check",
+    response_model=ETASlotCheckResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Compare driver ETA with slot start time (SW Architecture Route)",
+    description=(
+        "Compares the driver's estimated arrival time with the slot start time for a confirmed booking. "
+        "Warns the driver and offers reschedule, extend, or cancel options when projected late (REQ-F2-27 / CS19-053)."
+    ),
+)
+def get_station_eta_versus_slot_check(
+    booking_id: int = Query(..., description="Target booking ID"),
+    latitude: float = Query(..., description="Driver origin latitude [-90.0, 90.0]"),
+    longitude: float = Query(..., description="Driver origin longitude [-180.0, 180.0]"),
+    traffic_condition: str | None = Query(
+        default=None,
+        description="Optional traffic condition: low, normal, heavy, severe",
+    ),
+    grace_period_minutes: int = Query(
+        default=DEFAULT_GRACE_PERIOD_MINUTES,
+        ge=0,
+        description="Grace period in minutes (default 15 per BR-06)",
+    ),
+    current_time: datetime | None = Query(
+        default=None,
+        description="Optional simulation evaluation timestamp",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ETASlotCheckResponse:
+    return check_driver_eta_versus_slot(
+        db=db,
+        user=current_user,
+        booking_id=booking_id,
+        driver_latitude=latitude,
+        driver_longitude=longitude,
+        traffic_condition=traffic_condition,
+        current_time=current_time,
+        grace_period_minutes=grace_period_minutes,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Route Cache and Fallback Query Endpoint (REQ-F2-28 / CS19-054)
+# Must appear before /{station_id} to avoid FastAPI routing collision
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/route-cache-and-fallback",
+    response_model=CachedRouteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get cached route preview with straight-line fallback (SW Architecture Route)",
+    description=(
+        "Retrieves route preview cached for up to 2 minutes for identical origin/destination pairs. "
+        "Provides straight-line distance with an explanatory notice if maps service is unavailable (REQ-F2-28 / SR-F2-09)."
+    ),
+)
+def get_station_cached_route_preview(
+    station_id: int = Query(..., description="Target station ID"),
+    latitude: float = Query(..., description="Driver origin latitude [-90.0, 90.0]"),
+    longitude: float = Query(..., description="Driver origin longitude [-180.0, 180.0]"),
+    traffic_condition: str | None = Query(
+        default=None,
+        description="Optional traffic condition: low, normal, heavy, severe",
+    ),
+    force_fresh: bool = Query(
+        default=False,
+        description="Bypass cache and force freshly calculated route preview",
+    ),
+    simulate_maps_unavailable: bool = Query(
+        default=False,
+        description="Simulate maps service outage to test straight-line fallback (SR-F2-09)",
+    ),
+    current_time: datetime | None = Query(
+        default=None,
+        description="Optional evaluation timestamp",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CachedRouteResponse:
+    return get_cached_route_preview(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        origin_latitude=latitude,
+        origin_longitude=longitude,
+        traffic_condition=traffic_condition,
+        force_fresh=force_fresh,
+        simulate_maps_unavailable=simulate_maps_unavailable,
+        current_time=current_time,
+    )
+
+
 @router.get(
     "/{station_id}",
     response_model=StationResponse,
@@ -1058,4 +1356,357 @@ def get_station_approval_status(
         station_id=station_id,
     )
     return StationApprovalGateStatusResponse(**data)
+
+
+# ---------------------------------------------------------------------------
+# Slot Generation Path Endpoints (REQ-F2-22 / CS19-048)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{station_id}/slot-generation",
+    response_model=StationBookableSlotsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Generate bookable slots for station (path route)",
+    description="Generates 15-minute bookable slots for all connectors at a station up to 7 days ahead (REQ-F2-22 / CS19-048).",
+)
+@router.get(
+    "/{station_id}/slots",
+    response_model=StationBookableSlotsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get bookable slots for station",
+    description="Path alias for bookable slot generation (REQ-F2-22).",
+)
+def generate_station_slots_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    days_ahead: int = Query(default=MAX_SLOT_DAYS_AHEAD, ge=1, le=MAX_SLOT_DAYS_AHEAD, description="Days ahead (1..7)"),
+    target_date: date | None = Query(default=None, description="Optional single target date"),
+    available_only: bool = Query(default=False, description="Return available slots only"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationBookableSlotsResponse:
+    return generate_station_bookable_slots(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=None,
+        days_ahead=days_ahead,
+        target_date=target_date,
+        available_only=available_only,
+    )
+
+
+@router.get(
+    "/{station_id}/connectors/{connector_id}/slots",
+    response_model=StationBookableSlotsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get bookable slots for specific connector",
+    description="Generates 15-minute bookable slots for a single connector up to 7 days ahead (REQ-F2-22).",
+)
+def generate_connector_slots_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    connector_id: int = Path(..., description="Target connector ID"),
+    days_ahead: int = Query(default=MAX_SLOT_DAYS_AHEAD, ge=1, le=MAX_SLOT_DAYS_AHEAD, description="Days ahead (1..7)"),
+    target_date: date | None = Query(default=None, description="Optional single target date"),
+    available_only: bool = Query(default=False, description="Return available slots only"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationBookableSlotsResponse:
+    return generate_station_bookable_slots(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=connector_id,
+        days_ahead=days_ahead,
+        target_date=target_date,
+        available_only=available_only,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Slot Timeline Path Endpoints (REQ-F2-23 / CS19-049)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{station_id}/slot-timeline",
+    response_model=StationSlotTimelineResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display slot timeline for station (path route)",
+    description="Displays 15-minute slot timeline for a station and date (REQ-F2-23).",
+)
+@router.get(
+    "/{station_id}/timeline",
+    response_model=StationSlotTimelineResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display slot timeline (short path alias)",
+    description="Short path alias for slot timeline view (REQ-F2-23).",
+)
+def get_station_timeline_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    target_date: date | None = Query(default=None, description="Optional target date (YYYY-MM-DD), defaults to today"),
+    status: str | None = Query(default=None, description="Filter slots by status: Free, Booked, Blocked, Past"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationSlotTimelineResponse:
+    return get_station_slot_timeline(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=None,
+        target_date=target_date,
+        status_filter=status,
+    )
+
+
+@router.get(
+    "/{station_id}/connectors/{connector_id}/timeline",
+    response_model=StationSlotTimelineResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display slot timeline for specific connector",
+    description="Displays 15-minute slot timeline for a single connector and date (REQ-F2-23).",
+)
+def get_connector_timeline_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    connector_id: int = Path(..., description="Target connector ID"),
+    target_date: date | None = Query(default=None, description="Optional target date (YYYY-MM-DD), defaults to today"),
+    status: str | None = Query(default=None, description="Filter slots by status: Free, Booked, Blocked, Past"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationSlotTimelineResponse:
+    return get_station_slot_timeline(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=connector_id,
+        target_date=target_date,
+        status_filter=status,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Estimated Wait Time Path Endpoints (REQ-F2-24 / CS19-050)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{station_id}/estimated-wait-time",
+    response_model=EstimatedWaitTimeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display estimated wait time for station (path route)",
+    description="Displays estimated wait time when all compatible connectors are occupied (REQ-F2-24).",
+)
+@router.get(
+    "/{station_id}/wait-time",
+    response_model=EstimatedWaitTimeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display estimated wait time (short path alias)",
+    description="Short path alias displaying estimated wait time for a station (REQ-F2-24).",
+)
+def get_station_wait_time_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    vehicle_id: int | None = Query(default=None, description="Optional vehicle ID to evaluate connector compatibility"),
+    connector_type: str | None = Query(default=None, description="Optional connector type filter"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> EstimatedWaitTimeResponse:
+    return get_station_estimated_wait_time(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        vehicle_id=vehicle_id,
+        connector_type=connector_type,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Route Preview Path Endpoints (REQ-F2-25 / CS19-051)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{station_id}/route-preview",
+    response_model=RoutePreviewResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display route preview to station (path route)",
+    description=(
+        "Displays a route preview from the driver's location to a station, showing "
+        "the route, road distance and estimated travel time with current traffic (REQ-F2-25 / CS19-051)."
+    ),
+)
+@router.get(
+    "/{station_id}/preview",
+    response_model=RoutePreviewResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def get_station_route_preview_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    latitude: float = Query(..., description="Driver origin latitude [-90.0, 90.0]"),
+    longitude: float = Query(..., description="Driver origin longitude [-180.0, 180.0]"),
+    traffic_condition: str | None = Query(
+        default=None,
+        description="Optional traffic condition: low, normal, heavy, severe",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RoutePreviewResponse:
+    return calculate_route_preview(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        origin_latitude=latitude,
+        origin_longitude=longitude,
+        traffic_condition=traffic_condition,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Navigation Hand-off Path Endpoints (REQ-F2-26 / CS19-052)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{station_id}/navigation-hand-off",
+    response_model=NavigationHandoffResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Generate navigation deep links to station by path ID (REQ-F2-26)",
+    description="Path-based navigation hand-off deep link endpoint.",
+)
+@router.get(
+    "/{station_id}/handoff",
+    response_model=NavigationHandoffResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def get_station_navigation_handoff_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    app_type: str | None = Query(
+        default=None,
+        description="Optional app type: google_maps, apple_maps, waze, generic_geo",
+    ),
+    origin_latitude: float | None = Query(
+        default=None,
+        description="Optional driver origin latitude [-90.0, 90.0]",
+    ),
+    origin_longitude: float | None = Query(
+        default=None,
+        description="Optional driver origin longitude [-180.0, 180.0]",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> NavigationHandoffResponse:
+    return generate_navigation_handoff(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        app_type=app_type,
+        origin_latitude=origin_latitude,
+        origin_longitude=origin_longitude,
+    )
+
+
+# ---------------------------------------------------------------------------
+# ETA versus Slot Check Path Endpoints (REQ-F2-27 / CS19-053)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{station_id}/eta-versus-slot-check",
+    response_model=ETASlotCheckResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Compare driver ETA with slot start time for station booking (REQ-F2-27)",
+    description="Path-based ETA versus slot check endpoint for a station.",
+)
+def get_station_eta_versus_slot_check_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    booking_id: int = Query(..., description="Target booking ID"),
+    latitude: float = Query(..., description="Driver origin latitude [-90.0, 90.0]"),
+    longitude: float = Query(..., description="Driver origin longitude [-180.0, 180.0]"),
+    traffic_condition: str | None = Query(
+        default=None,
+        description="Optional traffic condition: low, normal, heavy, severe",
+    ),
+    grace_period_minutes: int = Query(
+        default=DEFAULT_GRACE_PERIOD_MINUTES,
+        ge=0,
+        description="Grace period in minutes (default 15 per BR-06)",
+    ),
+    current_time: datetime | None = Query(
+        default=None,
+        description="Optional simulation evaluation timestamp",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ETASlotCheckResponse:
+    return check_driver_eta_versus_slot(
+        db=db,
+        user=current_user,
+        booking_id=booking_id,
+        driver_latitude=latitude,
+        driver_longitude=longitude,
+        traffic_condition=traffic_condition,
+        current_time=current_time,
+        grace_period_minutes=grace_period_minutes,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Route Cache and Fallback Path Endpoints (REQ-F2-28 / CS19-054)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{station_id}/route-cache-and-fallback",
+    response_model=CachedRouteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get cached route preview for station by path ID (REQ-F2-28)",
+    description="Path-based cached route preview endpoint with straight-line fallback.",
+)
+@router.get(
+    "/{station_id}/cached-route",
+    response_model=CachedRouteResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def get_station_cached_route_preview_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    latitude: float = Query(..., description="Driver origin latitude [-90.0, 90.0]"),
+    longitude: float = Query(..., description="Driver origin longitude [-180.0, 180.0]"),
+    traffic_condition: str | None = Query(
+        default=None,
+        description="Optional traffic condition: low, normal, heavy, severe",
+    ),
+    force_fresh: bool = Query(
+        default=False,
+        description="Bypass cache and force freshly calculated route preview",
+    ),
+    simulate_maps_unavailable: bool = Query(
+        default=False,
+        description="Simulate maps service outage to test straight-line fallback (SR-F2-09)",
+    ),
+    current_time: datetime | None = Query(
+        default=None,
+        description="Optional evaluation timestamp",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CachedRouteResponse:
+    return get_cached_route_preview(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        origin_latitude=latitude,
+        origin_longitude=longitude,
+        traffic_condition=traffic_condition,
+        force_fresh=force_fresh,
+        simulate_maps_unavailable=simulate_maps_unavailable,
+        current_time=current_time,
+    )
+
+
+
+
+
+
 
