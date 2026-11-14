@@ -19,6 +19,7 @@ from app.booking.battery import (
 from app.booking.validators import get_battery_rules as domain_get_battery_rules
 from app.booking.slots import (
     create_manual_slot_booking as domain_create_manual_slot_booking,
+    create_slot_hold as domain_create_slot_hold,
     recommend_slots as domain_recommend_slots,
 )
 from app.models.user import User
@@ -28,6 +29,7 @@ from app.schemas.booking import (
     ChargingTimeEstimateResponse,
     ManualSlotBookingResponse,
     RecommendedSlotsResponse,
+    SlotHoldResponse,
 )
 
 
@@ -179,6 +181,29 @@ class BookingService:
     ) -> ManualSlotBookingResponse:
         """Create a booking after revalidating the selected slot's availability."""
         return domain_create_manual_slot_booking(
+            db=db,
+            user=user,
+            station_id=station_id,
+            vehicle_id=vehicle_id,
+            charger_id=charger_id,
+            start_time=start_time,
+            target_soc=target_soc,
+            ip_address=ip_address,
+        )
+
+    @staticmethod
+    def create_slot_hold(
+        db: Session,
+        user: User,
+        station_id: int,
+        vehicle_id: int,
+        charger_id: int,
+        start_time: datetime,
+        target_soc: int = 80,
+        ip_address: str | None = None,
+    ) -> SlotHoldResponse:
+        """Temporarily reserve a selected slot for five minutes."""
+        return domain_create_slot_hold(
             db=db,
             user=user,
             station_id=station_id,

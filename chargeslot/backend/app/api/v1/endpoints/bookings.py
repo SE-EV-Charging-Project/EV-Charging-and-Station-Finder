@@ -17,6 +17,7 @@ from app.schemas.booking import (
     ManualSlotBookingRequest,
     ManualSlotBookingResponse,
     RecommendedSlotsResponse,
+    SlotHoldResponse,
 )
 from app.services.booking_service import BookingService
 
@@ -172,6 +173,32 @@ def post_manual_slot_booking(
 ) -> ManualSlotBookingResponse:
     client_ip = request.client.host if request.client else None
     return BookingService.create_manual_slot_booking(
+        db=db,
+        user=current_user,
+        station_id=payload.station_id,
+        vehicle_id=payload.vehicle_id,
+        charger_id=payload.charger_id,
+        start_time=payload.start_time,
+        target_soc=payload.target_soc,
+        ip_address=client_ip,
+    )
+
+
+@router.post(
+    "/hold-slot",
+    response_model=SlotHoldResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Hold a selected slot for five minutes",
+    description="Temporarily reserves a selected compatible slot while payment is processed (REQ-F3-12 / CS19-066).",
+)
+def post_slot_hold(
+    payload: ManualSlotBookingRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SlotHoldResponse:
+    client_ip = request.client.host if request.client else None
+    return BookingService.create_slot_hold(
         db=db,
         user=current_user,
         station_id=payload.station_id,
