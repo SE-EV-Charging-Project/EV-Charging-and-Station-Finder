@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, Query, Request, status
+from datetime import date, datetime
+from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_operator, require_admin, get_current_user
@@ -20,6 +21,12 @@ from app.schemas.station import (
     StationApprovalResponse,
     StationApprovalGateStatusResponse,
     StationApprovalGateActionRequest,
+    StationBookableSlotsResponse,
+)
+from app.stations.slots import (
+    MAX_SLOT_DAYS_AHEAD,
+    MIN_SLOT_DAYS_AHEAD,
+    generate_station_bookable_slots,
 )
 from app.schemas.charger import (
     StationOutOfServiceMarkingRequest,
@@ -873,6 +880,39 @@ def get_station_paginated_search(
     )
 
 
+# ---------------------------------------------------------------------------
+# Slot Generation Query Endpoint (REQ-F2-22 / CS19-048)
+# Must appear before /{station_id} to avoid FastAPI routing collision
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/slot-generation",
+    response_model=StationBookableSlotsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Generate bookable 15-minute slots for connectors (SW Architecture Route)",
+    description="Generates 15-minute bookable slots for every connector up to 7 days ahead (REQ-F2-22 / CS19-048).",
+)
+def generate_slots(
+    station_id: int | None = Query(default=None, description="Station ID"),
+    connector_id: int | None = Query(default=None, description="Connector ID (station_id inferred if omitted)"),
+    days_ahead: int = Query(default=MAX_SLOT_DAYS_AHEAD, ge=1, le=MAX_SLOT_DAYS_AHEAD, description="Horizon in days (1..7)"),
+    target_date: date | None = Query(default=None, description="Optional single date filter (YYYY-MM-DD) within 7 days"),
+    available_only: bool = Query(default=False, description="Filter for bookable/available slots only"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationBookableSlotsResponse:
+    return generate_station_bookable_slots(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=connector_id,
+        days_ahead=days_ahead,
+        target_date=target_date,
+        available_only=available_only,
+    )
+
+
 @router.get(
     "/{station_id}",
     response_model=StationResponse,
@@ -1058,4 +1098,70 @@ def get_station_approval_status(
         station_id=station_id,
     )
     return StationApprovalGateStatusResponse(**data)
+
+
+# ---------------------------------------------------------------------------
+# Slot Generation Path Endpoints (REQ-F2-22 / CS19-048)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{station_id}/slot-generation",
+    response_model=StationBookableSlotsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Generate bookable slots for station (path route)",
+    description="Generates 15-minute bookable slots for all connectors at a station up to 7 days ahead (REQ-F2-22 / CS19-048).",
+)
+@router.get(
+    "/{station_id}/slots",
+    response_model=StationBookableSlotsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get bookable slots for station",
+    description="Path alias for bookable slot generation (REQ-F2-22).",
+)
+def generate_station_slots_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    days_ahead: int = Query(default=MAX_SLOT_DAYS_AHEAD, ge=1, le=MAX_SLOT_DAYS_AHEAD, description="Days ahead (1..7)"),
+    target_date: date | None = Query(default=None, description="Optional single target date"),
+    available_only: bool = Query(default=False, description="Return available slots only"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationBookableSlotsResponse:
+    return generate_station_bookable_slots(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=None,
+        days_ahead=days_ahead,
+        target_date=target_date,
+        available_only=available_only,
+    )
+
+
+@router.get(
+    "/{station_id}/connectors/{connector_id}/slots",
+    response_model=StationBookableSlotsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get bookable slots for specific connector",
+    description="Generates 15-minute bookable slots for a single connector up to 7 days ahead (REQ-F2-22).",
+)
+def generate_connector_slots_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    connector_id: int = Path(..., description="Target connector ID"),
+    days_ahead: int = Query(default=MAX_SLOT_DAYS_AHEAD, ge=1, le=MAX_SLOT_DAYS_AHEAD, description="Days ahead (1..7)"),
+    target_date: date | None = Query(default=None, description="Optional single target date"),
+    available_only: bool = Query(default=False, description="Return available slots only"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationBookableSlotsResponse:
+    return generate_station_bookable_slots(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=connector_id,
+        days_ahead=days_ahead,
+        target_date=target_date,
+        available_only=available_only,
+    )
+
 
