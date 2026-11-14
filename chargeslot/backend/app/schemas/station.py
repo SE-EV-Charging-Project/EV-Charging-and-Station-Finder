@@ -259,4 +259,14 @@ class StationBookableSlotsResponse(BaseModel):
     generated_at: datetime
 
 
+# Re-export slot timeline schemas (REQ-F2-23 / CS19-049)
+from app.schemas.dashboard import (
+    TimelineSlotState,
+    TimelineSlotItem,
+    ConnectorTimelineSummary,
+    StationSlotTimelineResponse,
+)
+
+
+
 
