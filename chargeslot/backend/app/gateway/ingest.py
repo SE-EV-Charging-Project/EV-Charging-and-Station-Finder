@@ -354,6 +354,8 @@ def ingest_meter_value(
     actor_user: User | None = None,
 ) -> MeterValueIngestResponse:
     """Persist validated OCPP meter data for the sole active booking on a charger."""
+    from app.booking.session_control import maybe_queue_target_energy_stop
+
     obs_utc = validate_observed_at(observed_at)
     cleaned_idempotency = (
         idempotency_key.strip() if idempotency_key and idempotency_key.strip() else None
@@ -425,8 +427,35 @@ def ingest_meter_value(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Meter message ID has already been used for another connector or booking.",
                 )
+            latest_for_booking = (
+                db.query(ChargingSessionReading)
+                .filter(ChargingSessionReading.booking_id == booking.id)
+                .order_by(
+                    ChargingSessionReading.observed_at.desc(),
+                    ChargingSessionReading.id.desc(),
+                )
+                .first()
+            )
+            target_reached = False
+            auto_stop_command = None
+            auto_stop_warning = None
+            if latest_for_booking is not None:
+                (
+                    target_reached,
+                    auto_stop_command,
+                    auto_stop_warning,
+                ) = maybe_queue_target_energy_stop(
+                    db,
+                    booking=booking,
+                    latest_reading=latest_for_booking,
+                )
+                db.commit()
             return MeterValueIngestResponse(
-                message="Duplicate meter message ignored (idempotent replay).",
+                message=(
+                    "Duplicate meter message ignored (idempotent replay)."
+                    if not target_reached
+                    else "Target energy reached; stop command status is included."
+                ),
                 reading_id=existing_reading.id,
                 booking_id=existing_reading.booking_id,
                 connector_id=existing_reading.connector_id,
@@ -436,6 +465,16 @@ def ingest_meter_value(
                 observed_at=_ensure_utc(existing_reading.observed_at),
                 applied=False,
                 idempotent_replay=True,
+                target_energy_reached=target_reached,
+                auto_stop_command_id=(
+                    auto_stop_command.id if auto_stop_command is not None else None
+                ),
+                auto_stop_status=(
+                    auto_stop_command.status.value
+                    if auto_stop_command is not None
+                    else None
+                ),
+                auto_stop_warning=auto_stop_warning,
             )
 
     latest_reading = (
@@ -481,11 +520,23 @@ def ingest_meter_value(
         observed_at=obs_utc,
     )
     db.add(reading)
+    db.flush()
+    target_reached, auto_stop_command, auto_stop_warning = (
+        maybe_queue_target_energy_stop(
+            db,
+            booking=booking,
+            latest_reading=reading,
+        )
+    )
     db.commit()
     db.refresh(reading)
 
     return MeterValueIngestResponse(
-        message="Charging session meter reading ingested successfully.",
+        message=(
+            "Target energy reached; stop command status is included."
+            if target_reached
+            else "Charging session meter reading ingested successfully."
+        ),
         reading_id=reading.id,
         booking_id=booking.id,
         connector_id=connector.id,
@@ -494,6 +545,14 @@ def ingest_meter_value(
         energy_meter_kwh=reading.energy_meter_kwh,
         observed_at=_ensure_utc(reading.observed_at),
         applied=True,
+        target_energy_reached=target_reached,
+        auto_stop_command_id=(
+            auto_stop_command.id if auto_stop_command is not None else None
+        ),
+        auto_stop_status=(
+            auto_stop_command.status.value if auto_stop_command is not None else None
+        ),
+        auto_stop_warning=auto_stop_warning,
     )
 
 

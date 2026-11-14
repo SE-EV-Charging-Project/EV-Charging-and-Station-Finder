@@ -1,6 +1,14 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import String, Integer, Float, DateTime, ForeignKey, Enum
+from sqlalchemy import (
+    String,
+    Integer,
+    Float,
+    DateTime,
+    ForeignKey,
+    Enum,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
 
@@ -25,6 +33,12 @@ class Booking(Base):
     Tracks reservations for charging slots linked to a user and vehicle.
     """
     __tablename__ = "bookings"
+    __table_args__ = (
+        UniqueConstraint(
+            "stop_event_idempotency_key",
+            name="uq_bookings_stop_event_idempotency_key",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -63,6 +77,14 @@ class Booking(Base):
         Float,
         default=0.0,
         nullable=False,
+    )
+    session_ended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    session_transaction_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    meter_stop_wh: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    stop_event_idempotency_key: Mapped[str | None] = mapped_column(
+        String(120), nullable=True
     )
 
     created_at: Mapped[datetime] = mapped_column(

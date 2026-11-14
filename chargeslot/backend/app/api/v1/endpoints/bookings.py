@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Path, Request, status, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.booking.session_control import request_session_stop
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.booking import (
@@ -25,6 +26,7 @@ from app.schemas.booking import (
     SlotHoldResponse,
 )
 from app.services.booking_service import BookingService
+from app.schemas.session import SessionStopCommandResponse
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
 
@@ -232,6 +234,28 @@ def post_slot_hold(
         start_time=payload.start_time,
         target_soc=payload.target_soc,
         ip_address=client_ip,
+    )
+
+
+@router.post(
+    "/{booking_id}/stop-session",
+    response_model=SessionStopCommandResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Request an active charging session to stop",
+    description=(
+        "Queues an OCPP RemoteStopTransaction for the booking's active transaction. "
+        "The booking remains active until the gateway confirms StopTransaction."
+    ),
+)
+def post_stop_session(
+    booking_id: int = Path(..., gt=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SessionStopCommandResponse:
+    return request_session_stop(
+        db=db,
+        booking_id=booking_id,
+        user=current_user,
     )
 
 
