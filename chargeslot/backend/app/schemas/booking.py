@@ -144,3 +144,53 @@ class ChargingCostEstimateResponse(BaseModel):
     estimated_cost: float
     currency: str = "INR"
     message: str
+
+
+class RecommendedSlotItem(BaseModel):
+    """A compatible, available slot with its stable recommendation rank."""
+
+    rank: int
+    station_id: int
+    station_name: str
+    charger_id: int
+    start_time: datetime
+    end_time: datetime
+    energy_required_kwh: float
+    estimated_charging_time_minutes: float
+    slot_length_minutes: int
+    price_per_kwh: float | None
+    estimated_cost: float | None
+
+
+class RecommendedSlotsResponse(BaseModel):
+    """Ranked compatible slots for a vehicle and requested date."""
+
+    total: int
+    items: list[RecommendedSlotItem]
+
+
+class ManualSlotBookingRequest(BaseModel):
+    """Request to book a specific available compatible slot."""
+
+    station_id: int = Field(..., gt=0, strict=True)
+    charger_id: int = Field(..., gt=0, strict=True)
+    vehicle_id: int = Field(..., gt=0, strict=True)
+    start_time: datetime
+    target_soc: int = Field(default=80, ge=0, le=100, strict=True)
+
+
+class ManualSlotBookingResponse(BaseModel):
+    """Confirmed manual booking and the resulting charging estimate."""
+
+    booking_id: int
+    station_id: int
+    charger_id: int
+    vehicle_id: int
+    start_soc: int
+    target_soc: int
+    energy_required_kwh: float
+    estimated_charging_time_minutes: float
+    slot_length_minutes: int
+    start_time: datetime
+    end_time: datetime
+    status: str

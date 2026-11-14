@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, Request, status, Query
 from sqlalchemy.orm import Session
 
@@ -12,6 +14,9 @@ from app.schemas.booking import (
     ChargingCostEstimateResponse,
     ChargingTimeEstimateRequest,
     ChargingTimeEstimateResponse,
+    ManualSlotBookingRequest,
+    ManualSlotBookingResponse,
+    RecommendedSlotsResponse,
 )
 from app.services.booking_service import BookingService
 
@@ -122,4 +127,57 @@ def post_charging_cost_estimate(
         vehicle_id=payload.vehicle_id,
         station_id=payload.station_id,
         target_soc=payload.target_soc,
+    )
+
+
+@router.get(
+    "/recommended-slots",
+    response_model=RecommendedSlotsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Recommend available compatible charging slots",
+    description="Ranks available slots by earliest start, then station tariff and slot duration (REQ-F3-10 / CS19-064).",
+)
+def get_recommended_slots(
+    vehicle_id: int = Query(..., gt=0),
+    slot_date: date = Query(..., alias="date"),
+    target_soc: int = Query(default=80, ge=0, le=100),
+    station_id: int | None = Query(default=None, gt=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RecommendedSlotsResponse:
+    return BookingService.recommend_slots(
+        db=db,
+        user=current_user,
+        vehicle_id=vehicle_id,
+        slot_date=slot_date,
+        target_soc=target_soc,
+        station_id=station_id,
+        limit=limit,
+    )
+
+
+@router.post(
+    "/manual-slot",
+    response_model=ManualSlotBookingResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Book a selected compatible slot",
+    description="Creates a manual booking only if the selected compatible slot is still free and within station hours (REQ-F3-11 / CS19-065).",
+)
+def post_manual_slot_booking(
+    payload: ManualSlotBookingRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ManualSlotBookingResponse:
+    client_ip = request.client.host if request.client else None
+    return BookingService.create_manual_slot_booking(
+        db=db,
+        user=current_user,
+        station_id=payload.station_id,
+        vehicle_id=payload.vehicle_id,
+        charger_id=payload.charger_id,
+        start_time=payload.start_time,
+        target_soc=payload.target_soc,
+        ip_address=client_ip,
     )

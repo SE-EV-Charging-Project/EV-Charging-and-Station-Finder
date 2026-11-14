@@ -121,6 +121,25 @@ The response includes `slot_length_minutes`, rounded up to the next 15-minute bo
 ```
 The vehicle must belong to the authenticated driver and have a saved battery level. Cost is estimated as energy required in kWh multiplied by the station's configured `price_per_kwh`, rounded to two decimal places. The response currency is INR. A station without a configured tariff returns `409 Conflict`.
 
+### Recommended Slots and Manual Booking (REQ-F3-10/11 / CS19-064/065)
+- **Recommend:** `GET /api/v1/bookings/recommended-slots?vehicle_id=1&date=2026-11-13&target_soc=80`
+- **Choose:** `POST /api/v1/bookings/manual-slot`
+- **Auth:** Bearer Token (Driver or Admin)
+
+Recommendations include approved active stations and operational compatible chargers, honor operating hours, maintenance windows, and existing active bookings, and rank slots by earliest start, then configured tariff (missing tariffs last), then slot duration. Results are limited to 50 by default; `limit` can be set from 1 to 200, and `station_id` can restrict the search. A connector marked occupied now may still be recommended for a future slot; reserved, faulted, and offline connectors are excluded.
+
+The manual booking request must identify the station, charger, owned vehicle, start time, and target SoC. The service rechecks connector compatibility and availability before creating a confirmed booking; overlapping, blocked, or out-of-hours choices return `409 Conflict`.
+
+```json
+{
+  "station_id": 2,
+  "charger_id": 4,
+  "vehicle_id": 1,
+  "start_time": "2026-11-13T09:00:00Z",
+  "target_soc": 80
+}
+```
+
 ## Running Tests
 
 Execute unit and integration tests using pytest:
