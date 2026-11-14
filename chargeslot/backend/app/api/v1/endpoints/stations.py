@@ -30,10 +30,12 @@ from app.dashboard.wait import get_station_estimated_wait_time
 from app.navigation.routes import calculate_route_preview
 from app.navigation.handoff import generate_navigation_handoff
 from app.navigation.eta import check_driver_eta_versus_slot, DEFAULT_GRACE_PERIOD_MINUTES
+from app.navigation.cache import get_cached_route_preview
 from app.schemas.navigation import (
     RoutePreviewResponse,
     NavigationHandoffResponse,
     ETASlotCheckResponse,
+    CachedRouteResponse,
 )
 from app.stations.slots import (
     MAX_SLOT_DAYS_AHEAD,
@@ -1117,6 +1119,58 @@ def get_station_eta_versus_slot_check(
     )
 
 
+# ---------------------------------------------------------------------------
+# Route Cache and Fallback Query Endpoint (REQ-F2-28 / CS19-054)
+# Must appear before /{station_id} to avoid FastAPI routing collision
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/route-cache-and-fallback",
+    response_model=CachedRouteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get cached route preview with straight-line fallback (SW Architecture Route)",
+    description=(
+        "Retrieves route preview cached for up to 2 minutes for identical origin/destination pairs. "
+        "Provides straight-line distance with an explanatory notice if maps service is unavailable (REQ-F2-28 / SR-F2-09)."
+    ),
+)
+def get_station_cached_route_preview(
+    station_id: int = Query(..., description="Target station ID"),
+    latitude: float = Query(..., description="Driver origin latitude [-90.0, 90.0]"),
+    longitude: float = Query(..., description="Driver origin longitude [-180.0, 180.0]"),
+    traffic_condition: str | None = Query(
+        default=None,
+        description="Optional traffic condition: low, normal, heavy, severe",
+    ),
+    force_fresh: bool = Query(
+        default=False,
+        description="Bypass cache and force freshly calculated route preview",
+    ),
+    simulate_maps_unavailable: bool = Query(
+        default=False,
+        description="Simulate maps service outage to test straight-line fallback (SR-F2-09)",
+    ),
+    current_time: datetime | None = Query(
+        default=None,
+        description="Optional evaluation timestamp",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CachedRouteResponse:
+    return get_cached_route_preview(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        origin_latitude=latitude,
+        origin_longitude=longitude,
+        traffic_condition=traffic_condition,
+        force_fresh=force_fresh,
+        simulate_maps_unavailable=simulate_maps_unavailable,
+        current_time=current_time,
+    )
+
+
 @router.get(
     "/{station_id}",
     response_model=StationResponse,
@@ -1595,6 +1649,61 @@ def get_station_eta_versus_slot_check_by_id(
         current_time=current_time,
         grace_period_minutes=grace_period_minutes,
     )
+
+
+# ---------------------------------------------------------------------------
+# Route Cache and Fallback Path Endpoints (REQ-F2-28 / CS19-054)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{station_id}/route-cache-and-fallback",
+    response_model=CachedRouteResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get cached route preview for station by path ID (REQ-F2-28)",
+    description="Path-based cached route preview endpoint with straight-line fallback.",
+)
+@router.get(
+    "/{station_id}/cached-route",
+    response_model=CachedRouteResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def get_station_cached_route_preview_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    latitude: float = Query(..., description="Driver origin latitude [-90.0, 90.0]"),
+    longitude: float = Query(..., description="Driver origin longitude [-180.0, 180.0]"),
+    traffic_condition: str | None = Query(
+        default=None,
+        description="Optional traffic condition: low, normal, heavy, severe",
+    ),
+    force_fresh: bool = Query(
+        default=False,
+        description="Bypass cache and force freshly calculated route preview",
+    ),
+    simulate_maps_unavailable: bool = Query(
+        default=False,
+        description="Simulate maps service outage to test straight-line fallback (SR-F2-09)",
+    ),
+    current_time: datetime | None = Query(
+        default=None,
+        description="Optional evaluation timestamp",
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CachedRouteResponse:
+    return get_cached_route_preview(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        origin_latitude=latitude,
+        origin_longitude=longitude,
+        traffic_condition=traffic_condition,
+        force_fresh=force_fresh,
+        simulate_maps_unavailable=simulate_maps_unavailable,
+        current_time=current_time,
+    )
+
 
 
 
