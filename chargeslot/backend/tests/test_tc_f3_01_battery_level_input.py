@@ -10,6 +10,7 @@ from datetime import datetime, time, timedelta, timezone
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.booking.battery import (
@@ -30,6 +31,7 @@ from app.models.charger import Charger, Connector, ConnectorStatus, CurrentType
 from app.models.station import Station, StationStatus
 from app.models.maintenance import MaintenanceWindow
 from app.models.booking import Booking, BookingStatus
+from app.models.booking_slot_claim import BookingSlotClaim
 from app.services.booking_service import BookingService
 from app.services.vehicle_service import VehicleService
 from app.utils.security import hash_password, create_access_token
@@ -663,6 +665,12 @@ def test_tc_f3_11_manual_slot_booking_rejects_foreign_vehicle_and_overlaps(
     assert response.status_code == 201
     assert response.json()["status"] == "Confirmed"
     assert response.json()["slot_length_minutes"] == 60
+    assert (
+        db_session.query(BookingSlotClaim)
+        .filter(BookingSlotClaim.booking_id == response.json()["booking_id"])
+        .count()
+        == 4
+    )
     actual_end_time = datetime.fromisoformat(
         response.json()["end_time"].replace("Z", "+00:00")
     )
@@ -736,6 +744,69 @@ def test_tc_f3_12_slot_hold_expires_after_five_minutes_and_blocks_booking(
         headers=headers,
     )
     assert available_booking.status_code == 201, available_booking.text
+
+
+def test_tc_f3_13_database_claim_prevents_duplicate_charger_intervals(
+    db_session: Session,
+    driver_alice: User,
+    alice_vehicle: Vehicle,
+    alice_station: Station,
+    alice_charger: Charger,
+):
+    slot_start = datetime.combine(
+        datetime.now(timezone.utc).date() + timedelta(days=1),
+        time(9, 0),
+        tzinfo=timezone.utc,
+    )
+    first_booking = Booking(
+        user_id=driver_alice.id,
+        vehicle_id=alice_vehicle.id,
+        station_id=alice_station.id,
+        charger_id=alice_charger.id,
+        start_soc=20,
+        target_soc=80,
+        est_energy_kwh=27.0,
+        est_duration_min=60,
+        status=BookingStatus.CONFIRMED,
+        start_time=slot_start,
+        end_time=slot_start + timedelta(hours=1),
+    )
+    db_session.add(first_booking)
+    db_session.flush()
+    db_session.add(
+        BookingSlotClaim(
+            charger_id=alice_charger.id,
+            slot_start_time=slot_start,
+            booking_id=first_booking.id,
+        )
+    )
+    db_session.commit()
+
+    duplicate_booking = Booking(
+        user_id=driver_alice.id,
+        vehicle_id=alice_vehicle.id,
+        station_id=alice_station.id,
+        charger_id=alice_charger.id,
+        start_soc=20,
+        target_soc=80,
+        est_energy_kwh=27.0,
+        est_duration_min=60,
+        status=BookingStatus.CONFIRMED,
+        start_time=slot_start,
+        end_time=slot_start + timedelta(hours=1),
+    )
+    db_session.add(duplicate_booking)
+    db_session.flush()
+    db_session.add(
+        BookingSlotClaim(
+            charger_id=alice_charger.id,
+            slot_start_time=slot_start,
+            booking_id=duplicate_booking.id,
+        )
+    )
+    with pytest.raises(IntegrityError, match="booking_slot_claims.charger_id"):
+        db_session.commit()
+    db_session.rollback()
 
 
 def test_tc_f3_07_charging_time_requires_owned_vehicle_and_saved_battery_level(

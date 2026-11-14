@@ -5,6 +5,7 @@ from app.models.token import PasswordResetCode, RevokedToken
 from app.models.operator_application import OperatorApplication, ApplicationStatus
 from app.models.vehicle import Vehicle, ConnectorType
 from app.models.booking import Booking, BookingStatus
+from app.models.booking_slot_claim import BookingSlotClaim
 from app.models.station import Station, StationStatus
 from app.models.charger import Charger, Connector, CurrentType, ConnectorStatus
 from app.models.maintenance import MaintenanceWindow
@@ -32,6 +33,7 @@ __all__ = [
     "ConnectorType",
     "Booking",
     "BookingStatus",
+    "BookingSlotClaim",
     "Station",
     "StationStatus",
     "Charger",

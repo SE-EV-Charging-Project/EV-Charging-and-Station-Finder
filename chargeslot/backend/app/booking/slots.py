@@ -4,7 +4,8 @@ from datetime import date, datetime, time, timedelta, timezone
 import math
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_
+from sqlalchemy import and_, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.booking.battery import (
@@ -16,6 +17,7 @@ from app.booking.battery import (
 )
 from app.booking.validators import validate_battery_level_input
 from app.models.booking import Booking, BookingStatus
+from app.models.booking_slot_claim import BookingSlotClaim
 from app.models.charger import Charger, Connector, ConnectorStatus, CurrentType
 from app.models.maintenance import MaintenanceWindow
 from app.models.station import Station, StationStatus
@@ -116,6 +118,76 @@ def _overlaps_existing_booking(
         < min(end_time, ensure_utc(booking.end_time))
         for booking in bookings
     )
+
+
+def _release_stale_slot_claims(db: Session, now_utc: datetime) -> None:
+    expired_hold_ids = [
+        booking_id
+        for (booking_id,) in (
+            db.query(Booking.id)
+            .filter(
+                Booking.status == BookingStatus.HELD,
+                Booking.hold_expires_at <= now_utc,
+            )
+            .all()
+        )
+    ]
+    if expired_hold_ids:
+        db.query(Booking).filter(Booking.id.in_(expired_hold_ids)).update(
+            {Booking.status: BookingStatus.EXPIRED},
+            synchronize_session=False,
+        )
+
+    stale_booking_ids = select(Booking.id).where(
+            or_(
+                Booking.status.notin_(ACTIVE_BOOKING_STATUSES),
+                Booking.end_time <= now_utc,
+                and_(
+                    Booking.status == BookingStatus.HELD,
+                    Booking.hold_expires_at <= now_utc,
+                ),
+            )
+    )
+    deleted_count = (
+        db.query(BookingSlotClaim)
+        .filter(BookingSlotClaim.booking_id.in_(stale_booking_ids))
+        .delete(synchronize_session=False)
+    )
+    if expired_hold_ids or deleted_count:
+        db.commit()
+
+
+def _slot_claims_for_booking(booking: Booking) -> list[BookingSlotClaim]:
+    if booking.charger_id is None:
+        raise RuntimeError("Cannot claim a booking without a charger.")
+
+    start_time = ensure_utc(booking.start_time)
+    end_time = ensure_utc(booking.end_time)
+    if (
+        start_time.minute % SLOT_INTERVAL_MINUTES != 0
+        or start_time.second != 0
+        or start_time.microsecond != 0
+        or end_time.minute % SLOT_INTERVAL_MINUTES != 0
+        or end_time.second != 0
+        or end_time.microsecond != 0
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Booking times must align to 15-minute slot boundaries.",
+        )
+
+    claims: list[BookingSlotClaim] = []
+    slot_start = start_time
+    while slot_start < end_time:
+        claims.append(
+            BookingSlotClaim(
+                charger_id=booking.charger_id,
+                slot_start_time=slot_start,
+                booking_id=booking.id,
+            )
+        )
+        slot_start += timedelta(minutes=SLOT_INTERVAL_MINUTES)
+    return claims
 
 
 def _candidate_slots(
@@ -339,6 +411,7 @@ def _create_slot_booking(
     ip_address: str | None = None,
     booking_status: BookingStatus = BookingStatus.CONFIRMED,
 ) -> tuple[Booking, float, int, float]:
+    _release_stale_slot_claims(db, datetime.now(timezone.utc))
     vehicle, validated_target = _validate_estimate_inputs(
         db=db,
         user=user,
@@ -449,6 +522,28 @@ def _create_slot_booking(
         ),
     )
     db.add(booking)
+    db.flush()
+    db.add_all(_slot_claims_for_booking(booking))
+    try:
+        db.flush()
+    except IntegrityError as error:
+        db.rollback()
+        message = str(error.orig)
+        postgres_constraint = getattr(
+            getattr(error.orig, "diag", None),
+            "constraint_name",
+            None,
+        )
+        if (
+            postgres_constraint == "uq_booking_slot_claim_charger_start"
+            or "booking_slot_claims.charger_id, booking_slot_claims.slot_start_time"
+            in message
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Selected slot was just booked by another request.",
+            ) from error
+        raise
     db.commit()
     db.refresh(booking)
 
