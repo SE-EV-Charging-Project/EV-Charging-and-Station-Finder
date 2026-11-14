@@ -100,6 +100,25 @@ class StaleStatusHandlingResponse(BaseModel):
     connectors: list[StaleConnectorStatusItem] = Field(default_factory=list)
 
 
+class LiveSessionMonitorResponse(BaseModel):
+    """Meter-backed charging session data for driver dashboard polling (REQ-F3-29)."""
+
+    booking_id: int
+    connector_id: int | None = None
+    charger_id: int
+    has_telemetry: bool
+    power_kw: float | None = None
+    energy_kwh: float | None = None
+    estimated_soc_pct: float | None = None
+    elapsed_seconds: int | None = None
+    estimated_cost_inr: float | None = None
+    cost_available: bool
+    last_updated_at: datetime | None = None
+    is_stale: bool
+    refresh_interval_seconds: int = 30
+    retrieved_at: datetime
+
+
 class ReservedConnectorStatusItem(BaseModel):
     """
     Connector status item reflecting reserved status when an active confirmed booking
@@ -285,7 +304,3 @@ class EstimatedWaitTimeResponse(BaseModel):
     message: str
     calculated_at: datetime
     connectors: list[CompatibleConnectorWaitItem] = Field(default_factory=list)
-
-
-
-

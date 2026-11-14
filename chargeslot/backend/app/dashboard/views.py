@@ -7,18 +7,22 @@ from app.core.permissions import enforce_operator_scope
 from app.discovery.views import _enum_to_str, compute_station_marker
 from app.gateway.ingest import _ensure_utc
 from app.models.charger import Charger, Connector, ConnectorStatus
+from app.models.booking import Booking, BookingStatus
+from app.models.charging_session_reading import ChargingSessionReading
 from app.models.connector_status_event import ConnectorStatusEvent
 from app.models.station import Station
 from app.models.user import User, UserRole
 from app.schemas.dashboard import (
     ConnectorLiveStatusItem,
     LiveConnectorStatusDisplayResponse,
+    LiveSessionMonitorResponse,
 )
 from app.stations.moderation import StationModerationService
 
 _CANONICAL_STATUSES: dict[str, ConnectorStatus] = {
     s.value.lower(): s for s in ConnectorStatus
 }
+_CHARGING_EFFICIENCY = 0.9
 
 
 def validate_live_status_params(
@@ -306,5 +310,143 @@ def get_live_connector_status_display(
         last_status_update=last_status_update,
         retrieved_at=now_utc,
         connectors=displayed_items,
+    )
+
+
+def get_live_session_monitor(
+    db: Session,
+    user: User,
+    booking_id: int,
+) -> LiveSessionMonitorResponse:
+    """Return the latest meter-backed values for a driver's active booking."""
+    booking = (
+        db.query(Booking)
+        .options(joinedload(Booking.vehicle))
+        .filter(Booking.id == booking_id)
+        .first()
+    )
+    if booking is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Active booking {booking_id} not found.",
+        )
+    if booking.status != BookingStatus.ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Live session monitoring is available only for active bookings.",
+        )
+    if booking.charger_id is None or booking.station_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The active booking is not linked to a charger and station.",
+        )
+
+    station = db.query(Station).filter(Station.id == booking.station_id).first()
+    if station is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Station for the active booking was not found.",
+        )
+    if user.role == UserRole.DRIVER:
+        if booking.user_id != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Active booking {booking_id} not found.",
+            )
+    elif user.role == UserRole.OPERATOR:
+        enforce_operator_scope(user, station.operator_id)
+    elif user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the booking driver, station operator, or an administrator can view this session.",
+        )
+
+    price_per_kwh = station.price_per_kwh
+    if price_per_kwh is not None and price_per_kwh < 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Station tariff must not be negative.",
+        )
+
+    now_utc = datetime.now(timezone.utc)
+    latest = (
+        db.query(ChargingSessionReading)
+        .filter(ChargingSessionReading.booking_id == booking.id)
+        .order_by(
+            ChargingSessionReading.observed_at.desc(),
+            ChargingSessionReading.id.desc(),
+        )
+        .first()
+    )
+    if latest is None:
+        return LiveSessionMonitorResponse(
+            booking_id=booking.id,
+            connector_id=booking.connector_id,
+            charger_id=booking.charger_id,
+            has_telemetry=False,
+            cost_available=price_per_kwh is not None,
+            is_stale=True,
+            retrieved_at=now_utc,
+        )
+
+    first = (
+        db.query(ChargingSessionReading)
+        .filter(ChargingSessionReading.booking_id == booking.id)
+        .order_by(
+            ChargingSessionReading.observed_at.asc(),
+            ChargingSessionReading.id.asc(),
+        )
+        .first()
+    )
+    if first is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Meter readings for the active booking are temporarily unavailable.",
+        )
+    energy_kwh = max(0.0, latest.energy_meter_kwh - first.energy_meter_kwh)
+    elapsed_seconds = max(
+        0, int((now_utc - _ensure_utc(first.observed_at)).total_seconds())
+    )
+    estimated_soc_pct: float | None = None
+    if booking.vehicle is not None:
+        if booking.vehicle.battery_kwh <= 0 or not 0 <= booking.start_soc <= 100:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Vehicle battery capacity or booking start charge is invalid.",
+            )
+        estimated_soc_pct = round(
+            min(
+                100.0,
+                booking.start_soc
+                + energy_kwh
+                * _CHARGING_EFFICIENCY
+                / booking.vehicle.battery_kwh
+                * 100,
+            ),
+            1,
+        )
+
+    estimated_cost = (
+        round(energy_kwh * price_per_kwh, 2)
+        if price_per_kwh is not None
+        else None
+    )
+    last_updated_at = _ensure_utc(latest.observed_at)
+    seconds_since_update = max(0, int((now_utc - last_updated_at).total_seconds()))
+
+    return LiveSessionMonitorResponse(
+        booking_id=booking.id,
+        connector_id=latest.connector_id,
+        charger_id=booking.charger_id,
+        has_telemetry=True,
+        power_kw=latest.power_kw,
+        energy_kwh=round(energy_kwh, 3),
+        estimated_soc_pct=estimated_soc_pct,
+        elapsed_seconds=elapsed_seconds,
+        estimated_cost_inr=estimated_cost,
+        cost_available=price_per_kwh is not None,
+        last_updated_at=last_updated_at,
+        is_stale=seconds_since_update > 30,
+        retrieved_at=now_utc,
     )
 

@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.core.permissions import enforce_operator_scope
 from app.models.charger import Charger, Connector, ConnectorStatus
+from app.models.booking import Booking, BookingStatus
+from app.models.charging_session_reading import ChargingSessionReading
 from app.models.connector_status_event import ConnectorStatusEvent
 from app.models.station import Station
 from app.models.user import User
@@ -13,6 +15,7 @@ from app.schemas.gateway import (
     ConnectorStatusEventItem,
     ConnectorStatusHistoryResponse,
     ConnectorStatusIngestResponse,
+    MeterValueIngestResponse,
 )
 from app.services.audit_service import AuditService
 
@@ -334,6 +337,163 @@ def ingest_status(
         applied=True,
         idempotent_replay=False,
         event_id=event.id,
+    )
+
+
+def ingest_meter_value(
+    db: Session,
+    *,
+    connector_id: int | None,
+    gateway_id: str | None,
+    connector_index: int | None,
+    power_kw: float,
+    energy_meter_kwh: float,
+    observed_at: datetime | None = None,
+    transaction_id: int | None = None,
+    idempotency_key: str | None = None,
+    actor_user: User | None = None,
+) -> MeterValueIngestResponse:
+    """Persist validated OCPP meter data for the sole active booking on a charger."""
+    obs_utc = validate_observed_at(observed_at)
+    cleaned_idempotency = (
+        idempotency_key.strip() if idempotency_key and idempotency_key.strip() else None
+    )
+    connector, charger, station = resolve_connector_target(
+        db,
+        connector_id=connector_id,
+        gateway_id=gateway_id,
+        connector_index=connector_index,
+    )
+    if actor_user is not None:
+        enforce_operator_scope(actor_user, station.operator_id)
+    if charger.power_kw <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Charger rated power must be positive before accepting meter data.",
+        )
+    if power_kw > charger.power_kw * 1.1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Reported power exceeds the charger's rated power tolerance.",
+        )
+
+    active_bookings = (
+        db.query(Booking)
+        .filter(
+            Booking.charger_id == charger.id,
+            Booking.status == BookingStatus.ACTIVE,
+        )
+        .order_by(Booking.id.asc())
+        .all()
+    )
+    if not active_bookings:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Meter readings can only be recorded for an active booking.",
+        )
+    connector_bookings = [
+        booking for booking in active_bookings if booking.connector_id == connector.id
+    ]
+    unassigned_bookings = [
+        booking for booking in active_bookings if booking.connector_id is None
+    ]
+    matched_bookings = connector_bookings or unassigned_bookings
+    if not matched_bookings:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No active booking is assigned to the reported connector.",
+        )
+    if len(matched_bookings) != 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Meter reading cannot be associated with an unambiguous active booking.",
+        )
+    booking = matched_bookings[0]
+
+    if cleaned_idempotency is not None:
+        existing_reading = (
+            db.query(ChargingSessionReading)
+            .filter(ChargingSessionReading.idempotency_key == cleaned_idempotency)
+            .first()
+        )
+        if existing_reading is not None:
+            if (
+                existing_reading.connector_id != connector.id
+                or existing_reading.booking_id != booking.id
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Meter message ID has already been used for another connector or booking.",
+                )
+            return MeterValueIngestResponse(
+                message="Duplicate meter message ignored (idempotent replay).",
+                reading_id=existing_reading.id,
+                booking_id=existing_reading.booking_id,
+                connector_id=existing_reading.connector_id,
+                charger_id=existing_reading.charger_id,
+                power_kw=existing_reading.power_kw,
+                energy_meter_kwh=existing_reading.energy_meter_kwh,
+                observed_at=_ensure_utc(existing_reading.observed_at),
+                applied=False,
+                idempotent_replay=True,
+            )
+
+    latest_reading = (
+        db.query(ChargingSessionReading)
+        .filter(ChargingSessionReading.booking_id == booking.id)
+        .order_by(
+            ChargingSessionReading.observed_at.desc(),
+            ChargingSessionReading.id.desc(),
+        )
+        .first()
+    )
+    if latest_reading is not None:
+        if latest_reading.connector_id != connector.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A charging session cannot change connectors after meter readings begin.",
+            )
+        if obs_utc < _ensure_utc(latest_reading.observed_at):
+            return MeterValueIngestResponse(
+                message="Stale meter reading ignored; a newer observation is already recorded.",
+                booking_id=booking.id,
+                connector_id=connector.id,
+                charger_id=charger.id,
+                power_kw=latest_reading.power_kw,
+                energy_meter_kwh=latest_reading.energy_meter_kwh,
+                observed_at=_ensure_utc(latest_reading.observed_at),
+                applied=False,
+            )
+        if energy_meter_kwh < latest_reading.energy_meter_kwh:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Cumulative energy meter readings must not decrease during a session.",
+            )
+
+    reading = ChargingSessionReading(
+        booking_id=booking.id,
+        charger_id=charger.id,
+        connector_id=connector.id,
+        transaction_id=transaction_id,
+        power_kw=power_kw,
+        energy_meter_kwh=energy_meter_kwh,
+        idempotency_key=cleaned_idempotency,
+        observed_at=obs_utc,
+    )
+    db.add(reading)
+    db.commit()
+    db.refresh(reading)
+
+    return MeterValueIngestResponse(
+        message="Charging session meter reading ingested successfully.",
+        reading_id=reading.id,
+        booking_id=booking.id,
+        connector_id=connector.id,
+        charger_id=charger.id,
+        power_kw=reading.power_kw,
+        energy_meter_kwh=reading.energy_meter_kwh,
+        observed_at=_ensure_utc(reading.observed_at),
+        applied=True,
     )
 
 
