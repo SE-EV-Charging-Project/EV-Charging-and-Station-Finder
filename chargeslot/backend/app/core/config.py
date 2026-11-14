@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     GATEWAY_WEBHOOK_SECRET: str = "dev_ocpp_gateway_secret_change_in_production"
     GATEWAY_STALE_STATUS_LIMIT_SECONDS: int = 120
     DATABASE_URL: str = "sqlite:///./chargeslot.db"
+    ROUTING_SERVICE_URL: str = "http://localhost:5000"
 
     model_config = SettingsConfigDict(
         env_file=".env",

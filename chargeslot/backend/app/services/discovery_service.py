@@ -28,6 +28,7 @@ from app.discovery.search import (
 )
 from app.discovery.views import get_station_markers, get_station_detail
 from app.discovery.filters import apply_station_filters
+from app.discovery.reachability import find_reachable_stations
 from app.discovery.sorting import search_and_sort_stations
 from app.discovery.text_search import search_stations_by_text
 from app.discovery.clustering import (
@@ -159,6 +160,27 @@ class DiscoveryService:
             total=total,
             applied_filters=applied,
             stations=stations,
+        )
+
+    @staticmethod
+    def get_reachable_stations(
+        db: Session,
+        user: User,
+        vehicle_id: int,
+        latitude: float,
+        longitude: float,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> StationFilterResponse:
+        """Find compatible stations within the vehicle's usable road range (REQ-F3-04)."""
+        return find_reachable_stations(
+            db=db,
+            user=user,
+            vehicle_id=vehicle_id,
+            latitude=latitude,
+            longitude=longitude,
+            limit=limit,
+            offset=offset,
         )
 
     @staticmethod
