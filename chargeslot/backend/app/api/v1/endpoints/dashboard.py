@@ -1,3 +1,4 @@
+from datetime import date, datetime
 from fastapi import APIRouter, Depends, Path, Query, WebSocket, status
 from sqlalchemy.orm import Session
 
@@ -11,6 +12,7 @@ from app.dashboard.state import (
     DEFAULT_RESERVATION_WINDOW_MINUTES,
     get_reserved_status_display,
 )
+from app.dashboard.timeline import get_station_slot_timeline
 from app.dashboard.views import get_live_connector_status_display
 from app.db.session import get_db
 from app.models.user import User
@@ -18,6 +20,7 @@ from app.schemas.dashboard import (
     LiveConnectorStatusDisplayResponse,
     ReservedStatusResponse,
     StaleStatusHandlingResponse,
+    StationSlotTimelineResponse,
 )
 
 router = APIRouter(tags=["Live Status Dashboard"])
@@ -250,6 +253,95 @@ def display_single_connector_live_status(
         db=db,
         user=current_user,
         connector_id=connector_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Slot Timeline Endpoints (REQ-F2-23 / CS19-049)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/stations/slot-timeline",
+    response_model=StationSlotTimelineResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display slot timeline per connector (SW Architecture Route)",
+    description=(
+        "Displays, for a selected station and date, a slot timeline per connector in which "
+        "each 15-minute slot is shown as Free, Booked, Blocked or Past (REQ-F2-23 / CS19-049)."
+    ),
+)
+def display_station_slot_timeline(
+    station_id: int | None = Query(default=None, description="Target station ID"),
+    connector_id: int | None = Query(default=None, description="Optional specific connector ID"),
+    target_date: date | None = Query(default=None, description="Target date (YYYY-MM-DD), defaults to today"),
+    status: str | None = Query(default=None, description="Filter slots by status: Free, Booked, Blocked, Past"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationSlotTimelineResponse:
+    return get_station_slot_timeline(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=connector_id,
+        target_date=target_date,
+        status_filter=status,
+    )
+
+
+@router.get(
+    "/stations/{station_id}/slot-timeline",
+    response_model=StationSlotTimelineResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display slot timeline for a station by path",
+    description="Path route displaying slot timeline for a station and date (REQ-F2-23).",
+)
+@router.get(
+    "/stations/{station_id}/timeline",
+    response_model=StationSlotTimelineResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display slot timeline (short path alias)",
+    description="Path alias displaying slot timeline for a station and date (REQ-F2-23).",
+)
+def display_station_slot_timeline_by_path(
+    station_id: int = Path(..., description="Target station ID"),
+    target_date: date | None = Query(default=None, description="Target date (YYYY-MM-DD), defaults to today"),
+    status: str | None = Query(default=None, description="Filter slots by status: Free, Booked, Blocked, Past"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationSlotTimelineResponse:
+    return get_station_slot_timeline(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=None,
+        target_date=target_date,
+        status_filter=status,
+    )
+
+
+@router.get(
+    "/stations/{station_id}/connectors/{connector_id}/timeline",
+    response_model=StationSlotTimelineResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display slot timeline for a single connector",
+    description="Path route displaying slot timeline for a single connector and date (REQ-F2-23).",
+)
+def display_connector_slot_timeline_by_path(
+    station_id: int = Path(..., description="Target station ID"),
+    connector_id: int = Path(..., description="Target connector ID"),
+    target_date: date | None = Query(default=None, description="Target date (YYYY-MM-DD), defaults to today"),
+    status: str | None = Query(default=None, description="Filter slots by status: Free, Booked, Blocked, Past"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationSlotTimelineResponse:
+    return get_station_slot_timeline(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        connector_id=connector_id,
+        target_date=target_date,
+        status_filter=status,
     )
 
 

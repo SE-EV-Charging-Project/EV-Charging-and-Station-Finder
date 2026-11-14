@@ -1,3 +1,4 @@
+import enum
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -154,5 +155,85 @@ class ReservedStatusResponse(BaseModel):
     last_status_update: datetime | None = None
     evaluated_at: datetime
     connectors: list[ReservedConnectorStatusItem] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Slot Timeline View Schemas (REQ-F2-23 / CS19-049)
+# ---------------------------------------------------------------------------
+
+
+class TimelineSlotState(str, enum.Enum):
+    """
+    Slot timeline status enum per REQ-F2-23 / CS19-049:
+    Each 15-minute slot is shown as Free, Booked, Blocked or Past.
+    """
+
+    FREE = "Free"
+    BOOKED = "Booked"
+    BLOCKED = "Blocked"
+    PAST = "Past"
+
+
+class TimelineSlotItem(BaseModel):
+    """
+    Individual 15-minute slot item on the timeline (REQ-F2-23 / CS19-049).
+    """
+
+    slot_id: str
+    connector_id: int
+    charger_id: int
+    start_time: datetime
+    end_time: datetime
+    duration_minutes: int = 15
+    status: TimelineSlotState
+    is_available: bool = False
+    blocked_reason: str | None = None
+    booking_id: int | None = None
+    booking_status: str | None = None
+
+
+class ConnectorTimelineSummary(BaseModel):
+    """
+    Timeline summary for a single connector on a target date (REQ-F2-23).
+    """
+
+    connector_id: int
+    connector_type: str
+    charger_id: int
+    charger_name: str | None = None
+    power_kw: float
+    current_type: str
+    is_operational: bool
+    target_date: str
+    total_slots: int
+    free_slots: int
+    booked_slots: int
+    blocked_slots: int
+    past_slots: int
+    slots: list[TimelineSlotItem] = Field(default_factory=list)
+
+
+class StationSlotTimelineResponse(BaseModel):
+    """
+    Station slot timeline response displaying timeline per connector for a selected station and date
+    (REQ-F2-23 / CS19-049).
+    """
+
+    station_id: int
+    station_name: str
+    station_status: str
+    is_active: bool
+    operating_hours: str | None = None
+    target_date: str
+    slot_interval_minutes: int = 15
+    total_connectors: int
+    total_slots: int
+    total_free_slots: int
+    total_booked_slots: int
+    total_blocked_slots: int
+    total_past_slots: int
+    connectors: list[ConnectorTimelineSummary] = Field(default_factory=list)
+    generated_at: datetime
+
 
 
