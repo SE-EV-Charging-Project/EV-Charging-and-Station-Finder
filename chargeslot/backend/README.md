@@ -160,6 +160,13 @@ When `vehicle_id` is supplied, results require an operational charger with the s
 }
 ```
 
+### Reachability Filtering (REQ-F3-04 / CS19-058)
+- **Method:** `GET`
+- **Path:** `/api/v1/stations/reachable?vehicle_id=1&latitude=12.97&longitude=77.59`
+- **Auth:** Bearer Token (Driver or Admin)
+
+The endpoint requires a saved vehicle battery level and returns only operational, connector-compatible stations whose road distance is no greater than the vehicle's usable range (which reserves 10% battery). The response includes both great-circle `distance_km` and routed `road_distance_km`. Configure `ROUTING_SERVICE_URL` to point to a self-hosted OSRM-compatible routing service; the default is `http://localhost:5000`. If routing is unavailable or returns invalid data, the API reports an error rather than substituting straight-line distance.
+
 ### Temporary Slot Hold (REQ-F3-12 / CS19-066)
 - **Method:** `POST`
 - **Path:** `/api/v1/bookings/hold-slot`

@@ -402,6 +402,172 @@ def test_tc_f3_05_vehicle_filter_caps_power_and_rejects_unsupported_current(
     assert response.json()["stations"] == []
 
 
+def test_tc_f3_04_filters_stations_by_usable_road_range(
+    client: TestClient,
+    db_session: Session,
+    driver_a: User,
+    vehicle_ccs2: Vehicle,
+    filter_test_stations: dict,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    vehicle_ccs2.current_soc = 100
+    db_session.commit()
+    token = make_token(driver_a)
+    stations = filter_test_stations
+    distances = {
+        stations["s1"].id: 10.0,
+        stations["s3"].id: 243.1,
+    }
+
+    def fake_road_distances(**kwargs):
+        return distances
+
+    monkeypatch.setattr(
+        "app.discovery.reachability.get_road_distances_km",
+        fake_road_distances,
+    )
+    response = client.get(
+        f"/api/v1/stations/reachable?vehicle_id={vehicle_ccs2.id}"
+        "&latitude=12.9716&longitude=77.5946",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["total"] == 1
+    assert result["stations"][0]["id"] == stations["s1"].id
+    assert result["stations"][0]["road_distance_km"] == 10.0
+    assert result["applied_filters"]["usable_range_km"] == 243.0
+
+
+def test_tc_f3_04_requires_saved_battery_level(
+    client: TestClient,
+    driver_a: User,
+    vehicle_ccs2: Vehicle,
+):
+    token = make_token(driver_a)
+    response = client.get(
+        f"/api/v1/stations/reachable?vehicle_id={vehicle_ccs2.id}"
+        "&latitude=12.9716&longitude=77.5946",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_tc_f3_04_rejects_foreign_vehicle(
+    client: TestClient,
+    driver_a: User,
+    vehicle_other_driver: Vehicle,
+):
+    token = make_token(driver_a)
+    response = client.get(
+        f"/api/v1/stations/reachable?vehicle_id={vehicle_other_driver.id}"
+        "&latitude=12.9716&longitude=77.5946",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_tc_f3_04_rejects_out_of_range_coordinates(
+    client: TestClient,
+    driver_a: User,
+    vehicle_ccs2: Vehicle,
+):
+    token = make_token(driver_a)
+    response = client.get(
+        f"/api/v1/stations/reachable?vehicle_id={vehicle_ccs2.id}"
+        "&latitude=91&longitude=77.5946",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_tc_f3_04_osrm_table_distances_are_converted_to_kilometers(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import httpx
+
+    from app.discovery.reachability import get_road_distances_km
+
+    def fake_get(_client, url, **kwargs):
+        assert url.endswith(
+            "/table/v1/driving/"
+            "77.000000,12.000000;77.100000,12.100000;77.200000,12.200000"
+        )
+        assert kwargs["params"] == {
+            "sources": "0",
+            "destinations": "1;2",
+            "annotations": "distance",
+        }
+        return httpx.Response(
+            200,
+            json={"code": "Ok", "distances": [[1500.0, None]]},
+        )
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    distances = get_road_distances_km(
+        origin_latitude=12.0,
+        origin_longitude=77.0,
+        destinations=[
+            (1, 12.1, 77.1),
+            (2, 12.2, 77.2),
+        ],
+    )
+
+    assert distances == {1: 1.5, 2: None}
+
+
+def test_tc_f3_04_router_unavailability_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import httpx
+    from fastapi import HTTPException
+
+    from app.discovery.reachability import get_road_distances_km
+
+    def unavailable_get(_client, url, **_kwargs):
+        request = httpx.Request("GET", url)
+        raise httpx.ConnectError("router unavailable", request=request)
+
+    monkeypatch.setattr(httpx.Client, "get", unavailable_get)
+    with pytest.raises(HTTPException) as exc_info:
+        get_road_distances_km(
+            origin_latitude=12.0,
+            origin_longitude=77.0,
+            destinations=[(1, 12.1, 77.1)],
+        )
+
+    assert exc_info.value.status_code == 503
+
+
+def test_tc_f3_04_invalid_router_distance_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import httpx
+    from fastapi import HTTPException
+
+    from app.discovery.reachability import get_road_distances_km
+
+    def invalid_distance_get(_client, _url, **_kwargs):
+        return httpx.Response(
+            200,
+            json={"code": "Ok", "distances": [[-1.0]]},
+        )
+
+    monkeypatch.setattr(httpx.Client, "get", invalid_distance_get)
+    with pytest.raises(HTTPException) as exc_info:
+        get_road_distances_km(
+            origin_latitude=12.0,
+            origin_longitude=77.0,
+            destinations=[(1, 12.1, 77.1)],
+        )
+
+    assert exc_info.value.status_code == 502
+
+
 def test_tc_f2_09_combined_filters_via_post(
     client: TestClient,
     driver_a: User,

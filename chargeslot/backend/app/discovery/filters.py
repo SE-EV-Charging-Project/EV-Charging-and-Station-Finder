@@ -36,7 +36,7 @@ def apply_station_filters(
     radius_km: float = DEFAULT_SEARCH_RADIUS_KM,
     sort_by: str | None = None,
     sort_order: str | None = None,
-    limit: int = 50,
+    limit: int | None = 50,
     offset: int = 0,
 ) -> tuple[int, dict[str, Any], list[NearbyStationItem]]:
     """
@@ -269,7 +269,11 @@ def apply_station_filters(
         matching_items.sort(key=lambda s: s.id)
 
     total_count = len(matching_items)
-    paginated_items = matching_items[offset : offset + limit]
+    paginated_items = (
+        matching_items[offset:]
+        if limit is None
+        else matching_items[offset : offset + limit]
+    )
 
     return total_count, applied_filters, paginated_items
 

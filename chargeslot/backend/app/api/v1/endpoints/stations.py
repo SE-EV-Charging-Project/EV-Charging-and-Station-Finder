@@ -598,6 +598,36 @@ def post_station_filter_stations(
     )
 
 
+@router.get(
+    "/reachable",
+    response_model=StationFilterResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Filter stations by vehicle reachability",
+    description=(
+        "Returns compatible stations whose self-hosted road-routing distance is within "
+        "the selected vehicle's usable range (REQ-F3-04 / CS19-058)."
+    ),
+)
+def get_reachable_stations(
+    vehicle_id: int = Query(..., gt=0, description="Owned vehicle with a saved battery level"),
+    latitude: float = Query(..., ge=-90.0, le=90.0, description="Current driver latitude"),
+    longitude: float = Query(..., ge=-180.0, le=180.0, description="Current driver longitude"),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StationFilterResponse:
+    return DiscoveryService.get_reachable_stations(
+        db=db,
+        user=current_user,
+        vehicle_id=vehicle_id,
+        latitude=latitude,
+        longitude=longitude,
+        limit=limit,
+        offset=offset,
+    )
+
+
 # =========================================================================
 # Station Sorting Endpoints (REQ-F2-10 / CS19-036 / Architecture Doc Page 6)
 # =========================================================================

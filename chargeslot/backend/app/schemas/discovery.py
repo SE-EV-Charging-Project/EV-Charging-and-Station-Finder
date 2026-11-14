@@ -62,6 +62,10 @@ class NearbyStationItem(BaseModel):
     latitude: float
     longitude: float
     distance_km: float = Field(..., description="Great-circle distance in km from driver's search location")
+    road_distance_km: float | None = Field(
+        default=None,
+        description="Road distance in km from the driver, when reachability filtering is used",
+    )
     operating_hours: str
     amenities: list[str] = Field(default_factory=list)
     contact_phone: str
