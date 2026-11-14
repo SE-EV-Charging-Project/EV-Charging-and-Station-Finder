@@ -147,6 +147,12 @@ from app.schemas.dashboard import (
     StaleStatusHandlingResponse,
 )
 
+from app.schemas.navigation import (
+    TrafficCondition,
+    RouteWaypoint,
+    RoutePreviewResponse,
+)
+
 __all__ = [
     "UserRegisterRequest",
     "UserLoginRequest",
@@ -272,4 +278,7 @@ __all__ = [
     "LiveConnectorStatusDisplayResponse",
     "StaleConnectorStatusItem",
     "StaleStatusHandlingResponse",
+    "TrafficCondition",
+    "RouteWaypoint",
+    "RoutePreviewResponse",
 ]
