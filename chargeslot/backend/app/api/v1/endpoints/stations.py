@@ -23,8 +23,10 @@ from app.schemas.station import (
     StationApprovalGateActionRequest,
     StationBookableSlotsResponse,
     StationSlotTimelineResponse,
+    EstimatedWaitTimeResponse,
 )
 from app.dashboard.timeline import get_station_slot_timeline
+from app.dashboard.wait import get_station_estimated_wait_time
 from app.stations.slots import (
     MAX_SLOT_DAYS_AHEAD,
     MIN_SLOT_DAYS_AHEAD,
@@ -949,6 +951,38 @@ def get_slot_timeline(
     )
 
 
+# ---------------------------------------------------------------------------
+# Estimated Wait Time Query Endpoint (REQ-F2-24 / CS19-050)
+# Must appear before /{station_id} to avoid FastAPI routing collision
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/estimated-wait-time",
+    response_model=EstimatedWaitTimeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display estimated wait time for station (SW Architecture Route)",
+    description=(
+        "Displays estimated wait time when all compatible connectors at a station are occupied, "
+        "calculated from the expected end of active sessions (REQ-F2-24 / CS19-050)."
+    ),
+)
+def get_estimated_wait_time(
+    station_id: int = Query(..., description="Target station ID"),
+    vehicle_id: int | None = Query(default=None, description="Optional vehicle ID to evaluate connector compatibility"),
+    connector_type: str | None = Query(default=None, description="Optional connector type filter (e.g. CCS2, Type 2, CHAdeMO, GB/T)"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> EstimatedWaitTimeResponse:
+    return get_station_estimated_wait_time(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        vehicle_id=vehicle_id,
+        connector_type=connector_type,
+    )
+
+
 @router.get(
     "/{station_id}",
     response_model=StationResponse,
@@ -1260,6 +1294,42 @@ def get_connector_timeline_by_id(
         target_date=target_date,
         status_filter=status,
     )
+
+
+# ---------------------------------------------------------------------------
+# Estimated Wait Time Path Endpoints (REQ-F2-24 / CS19-050)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{station_id}/estimated-wait-time",
+    response_model=EstimatedWaitTimeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display estimated wait time for station (path route)",
+    description="Displays estimated wait time when all compatible connectors are occupied (REQ-F2-24).",
+)
+@router.get(
+    "/{station_id}/wait-time",
+    response_model=EstimatedWaitTimeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Display estimated wait time (short path alias)",
+    description="Short path alias displaying estimated wait time for a station (REQ-F2-24).",
+)
+def get_station_wait_time_by_id(
+    station_id: int = Path(..., description="Target station ID"),
+    vehicle_id: int | None = Query(default=None, description="Optional vehicle ID to evaluate connector compatibility"),
+    connector_type: str | None = Query(default=None, description="Optional connector type filter"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> EstimatedWaitTimeResponse:
+    return get_station_estimated_wait_time(
+        db=db,
+        user=current_user,
+        station_id=station_id,
+        vehicle_id=vehicle_id,
+        connector_type=connector_type,
+    )
+
 
 
 

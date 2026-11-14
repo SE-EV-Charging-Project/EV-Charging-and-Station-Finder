@@ -33,6 +33,12 @@ from app.dashboard.timeline import (
     resolve_slot_timeline_state,
     get_station_slot_timeline,
 )
+from app.dashboard.wait import (
+    normalize_connector_type,
+    validate_wait_time_params,
+    calculate_connector_remaining_minutes,
+    get_station_estimated_wait_time,
+)
 
 __all__ = [
     "validate_live_status_params",
@@ -53,6 +59,10 @@ __all__ = [
     "validate_slot_timeline_params",
     "resolve_slot_timeline_state",
     "get_station_slot_timeline",
+    "normalize_connector_type",
+    "validate_wait_time_params",
+    "calculate_connector_remaining_minutes",
+    "get_station_estimated_wait_time",
     "StationStatusConnectionManager",
     "status_connection_manager",
     "authenticate_websocket_user",

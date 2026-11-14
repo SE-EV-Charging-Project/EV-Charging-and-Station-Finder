@@ -265,6 +265,8 @@ from app.schemas.dashboard import (
     TimelineSlotItem,
     ConnectorTimelineSummary,
     StationSlotTimelineResponse,
+    CompatibleConnectorWaitItem,
+    EstimatedWaitTimeResponse,
 )
 
 

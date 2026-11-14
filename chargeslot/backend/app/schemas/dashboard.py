@@ -236,4 +236,56 @@ class StationSlotTimelineResponse(BaseModel):
     generated_at: datetime
 
 
+# ---------------------------------------------------------------------------
+# Estimated Wait Time Schemas (REQ-F2-24 / CS19-050)
+# ---------------------------------------------------------------------------
+
+
+class CompatibleConnectorWaitItem(BaseModel):
+    """
+    Connector status and active session info for wait time calculation (REQ-F2-24 / CS19-050).
+    """
+
+    connector_id: int
+    charger_id: int
+    charger_name: str | None = None
+    connector_type: str
+    power_kw: float
+    current_type: str
+    status: str
+    is_operational: bool
+    is_available: bool
+    is_occupied: bool
+    active_booking_id: int | None = None
+    session_start_time: datetime | None = None
+    expected_end_time: datetime | None = None
+    remaining_minutes: float | None = None
+
+
+class EstimatedWaitTimeResponse(BaseModel):
+    """
+    Estimated wait time response when all compatible connectors at a station are occupied
+    (REQ-F2-24 / CS19-050 / SW Architecture Route /stations/estimated-wait-time).
+    """
+
+    station_id: int
+    station_name: str
+    station_status: str
+    is_active: bool
+    vehicle_id: int | None = None
+    vehicle_connector_type: str | None = None
+    total_compatible_connectors: int
+    available_compatible_connectors: int
+    occupied_compatible_connectors: int
+    unavailable_connectors: int = 0
+    all_compatible_occupied: bool
+    estimated_wait_minutes: float | None = None
+    expected_available_at: datetime | None = None
+    earliest_free_connector_id: int | None = None
+    message: str
+    calculated_at: datetime
+    connectors: list[CompatibleConnectorWaitItem] = Field(default_factory=list)
+
+
+
 
