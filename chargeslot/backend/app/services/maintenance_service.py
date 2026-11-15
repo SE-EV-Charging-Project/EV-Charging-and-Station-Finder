@@ -9,6 +9,8 @@ from app.models.station import Station, StationStatus
 from app.models.charger import Charger
 from app.models.maintenance import MaintenanceWindow
 from app.models.booking import Booking, BookingStatus
+from app.models.booking_slot_claim import BookingSlotClaim
+from app.booking.state import transition_booking_status
 from app.schemas.maintenance import (
     MaintenanceWindowCreateRequest,
     MaintenanceWindowUpdateRequest,
@@ -89,7 +91,10 @@ class MaintenanceService:
 
         conflicting_bookings = booking_query.all()
         for b in conflicting_bookings:
-            b.status = BookingStatus.CANCELLED
+            transition_booking_status(b, BookingStatus.CANCELLED)
+            db.query(BookingSlotClaim).filter(
+                BookingSlotClaim.booking_id == b.id
+            ).delete(synchronize_session=False)
             AuditService.log_action(
                 db=db,
                 user_id=user.id,

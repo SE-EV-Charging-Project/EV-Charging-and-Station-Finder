@@ -723,7 +723,8 @@ def test_tc_f3_11_manual_slot_booking_rejects_foreign_vehicle_and_overlaps(
         headers=headers,
     )
     assert response.status_code == 201
-    assert response.json()["status"] == "Confirmed"
+    assert response.json()["status"] == BookingStatus.HELD.value
+    assert response.json()["reservation_fee_amount"] > 0
     assert response.json()["slot_length_minutes"] == 60
     assert (
         db_session.query(BookingSlotClaim)

@@ -141,7 +141,7 @@ The vehicle must belong to the authenticated driver and have a saved battery lev
 
 Recommendations include approved active stations and operational compatible chargers, honor operating hours, maintenance windows, and existing active bookings, and rank slots by earliest start, then configured tariff (missing tariffs last), then slot duration. Results are limited to 50 by default; `limit` can be set from 1 to 200, and `station_id` can restrict the search. A connector marked occupied now may still be recommended for a future slot; reserved, faulted, and offline connectors are excluded.
 
-The manual booking request must identify the station, charger, owned vehicle, start time, and target SoC. The service rechecks connector compatibility and availability before creating a confirmed booking; unique database claims for each 15-minute charger and vehicle interval prevent concurrent requests from booking the same charger slot or overlapping the same vehicle. Overlapping, blocked, or out-of-hours choices return `409 Conflict`.
+The manual booking request must identify the station, charger, owned vehicle, start time, and target SoC. The service rechecks connector compatibility and availability before creating a five-minute `Held` booking and returns the reservation fee; unique database claims for each 15-minute charger and vehicle interval prevent concurrent requests from booking the same charger slot or overlapping the same vehicle. Overlapping, blocked, or out-of-hours choices return `409 Conflict`.
 
 ### Vehicle-Compatible Station Filtering (REQ-F3-05 / CS19-059)
 - **Method:** `GET`
@@ -172,7 +172,14 @@ The endpoint requires a saved vehicle battery level and returns only operational
 - **Path:** `/api/v1/bookings/hold-slot`
 - **Auth:** Bearer Token (Driver or Admin)
 
-The request uses the same fields as manual booking. A successful response creates a `Held` booking and includes `hold_expires_at`, exactly five minutes after the hold is created. Expired holds no longer block a slot; payment processing is handled by the payment integration.
+The request uses the same fields as manual booking. A successful response creates a `Held` booking and includes the reservation fee and `hold_expires_at`, exactly five minutes after the hold is created. Expired holds no longer block a slot.
+
+### Confirm a Booking (REQ-F3-15 / CS19-069)
+- **Method:** `POST`
+- **Path:** `/api/v1/bookings/{booking_id}/payment-confirmation`
+- **Auth:** `X-Payment-Webhook-Secret` shared secret, configured with `PAYMENT_WEBHOOK_SECRET`
+
+The provider adapter posts an INR payment event with a unique `provider_event_id`, the amount, and `Succeeded` or `Failed` status. A successful event confirms the booking only when the amount matches its reservation fee and the hold has not expired. Provider-event replays are idempotent. A late or mismatched successful payment is recorded as due for refund; this ledger does not charge or refund real money. Confirmation returns a booking reference and a signed check-in QR payload.
 
 ### Modify a Confirmed Booking (REQ-F3-23 / CS19-077)
 - **Method:** `PATCH`
