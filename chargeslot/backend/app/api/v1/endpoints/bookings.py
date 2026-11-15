@@ -1,10 +1,13 @@
 from datetime import date
+import secrets
 
-from fastapi import APIRouter, Depends, Path, Request, status, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, status, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.booking.payments import record_payment_confirmation
 from app.booking.session_control import request_session_stop
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.booking import (
@@ -22,6 +25,8 @@ from app.schemas.booking import (
     EnergyEstimateResponse,
     ManualSlotBookingRequest,
     ManualSlotBookingResponse,
+    PaymentConfirmationResponse,
+    PaymentConfirmationWebhookRequest,
     RecommendedSlotsResponse,
     SlotHoldResponse,
 )
@@ -190,7 +195,10 @@ def get_recommended_slots(
     response_model=ManualSlotBookingResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Book a selected compatible slot",
-    description="Creates a manual booking only if the selected compatible slot is still free and within station hours (REQ-F3-11 / CS19-065).",
+    description=(
+        "Creates a five-minute Held booking with a reservation fee only if the selected "
+        "compatible slot is still free and within station hours (REQ-F3-11 / CS19-065)."
+    ),
 )
 def post_manual_slot_booking(
     payload: ManualSlotBookingRequest,
@@ -234,6 +242,45 @@ def post_slot_hold(
         start_time=payload.start_time,
         target_soc=payload.target_soc,
         ip_address=client_ip,
+    )
+
+
+@router.post(
+    "/{booking_id}/payment-confirmation",
+    response_model=PaymentConfirmationResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Record a verified reservation payment event",
+    description=(
+        "Provider adapter callback authenticated with X-Payment-Webhook-Secret. "
+        "A held booking is confirmed only when its reservation fee is verified."
+    ),
+)
+def post_payment_confirmation(
+    payload: PaymentConfirmationWebhookRequest,
+    booking_id: int = Path(..., gt=0),
+    x_payment_webhook_secret: str | None = Header(
+        default=None,
+        alias="X-Payment-Webhook-Secret",
+    ),
+    db: Session = Depends(get_db),
+) -> PaymentConfirmationResponse:
+    if not settings.PAYMENT_WEBHOOK_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Payment webhook is not configured.",
+        )
+    if x_payment_webhook_secret is None or not secrets.compare_digest(
+        x_payment_webhook_secret,
+        settings.PAYMENT_WEBHOOK_SECRET,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid payment webhook secret.",
+        )
+    return record_payment_confirmation(
+        db=db,
+        booking_id=booking_id,
+        payload=payload,
     )
 
 

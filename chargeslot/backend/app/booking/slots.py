@@ -16,6 +16,8 @@ from app.booking.battery import (
     get_target_vehicle,
 )
 from app.booking.validators import validate_battery_level_input
+from app.booking.payments import calculate_reservation_fee
+from app.booking.state import transition_booking_status
 from app.models.booking import Booking, BookingStatus
 from app.models.booking_slot_claim import BookingSlotClaim
 from app.models.charger import Charger, Connector, ConnectorStatus, CurrentType
@@ -123,22 +125,16 @@ def _overlaps_existing_booking(
 
 
 def _release_stale_slot_claims(db: Session, now_utc: datetime) -> None:
-    expired_hold_ids = [
-        booking_id
-        for (booking_id,) in (
-            db.query(Booking.id)
-            .filter(
-                Booking.status == BookingStatus.HELD,
-                Booking.hold_expires_at <= now_utc,
-            )
-            .all()
+    expired_bookings = (
+        db.query(Booking)
+        .filter(
+            Booking.status == BookingStatus.HELD,
+            Booking.hold_expires_at <= now_utc,
         )
-    ]
-    if expired_hold_ids:
-        db.query(Booking).filter(Booking.id.in_(expired_hold_ids)).update(
-            {Booking.status: BookingStatus.EXPIRED},
-            synchronize_session=False,
-        )
+        .all()
+    )
+    for booking in expired_bookings:
+        transition_booking_status(booking, BookingStatus.EXPIRED)
 
     stale_booking_ids = select(Booking.id).where(
             or_(
@@ -155,7 +151,7 @@ def _release_stale_slot_claims(db: Session, now_utc: datetime) -> None:
         .filter(BookingSlotClaim.booking_id.in_(stale_booking_ids))
         .delete(synchronize_session=False)
     )
-    if expired_hold_ids or deleted_count:
+    if expired_bookings or deleted_count:
         db.commit()
 
 
@@ -466,9 +462,9 @@ def _create_slot_booking(
     vehicle_id: int,
     charger_id: int,
     start_time: datetime,
+    booking_status: BookingStatus,
     target_soc: int = 80,
     ip_address: str | None = None,
-    booking_status: BookingStatus = BookingStatus.CONFIRMED,
 ) -> tuple[Booking, float, int, float]:
     _release_stale_slot_claims(db, datetime.now(timezone.utc))
     vehicle, validated_target = _validate_estimate_inputs(
@@ -537,6 +533,17 @@ def _create_slot_booking(
             detail="Selected charger cannot charge this vehicle.",
         )
     energy_required_kwh, slot_length_minutes, charging_time_minutes = estimate
+    reservation_fee_amount = 0.0
+    if booking_status == BookingStatus.HELD:
+        if station.price_per_kwh is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A station tariff is required to calculate the reservation fee.",
+            )
+        reservation_fee_amount = calculate_reservation_fee(
+            energy_required_kwh,
+            station.price_per_kwh,
+        )
     normalized_start = ensure_utc(start_time)
     candidates = _candidate_slots(
         db=db,
@@ -572,6 +579,7 @@ def _create_slot_booking(
         est_duration_min=slot_length_minutes,
         booking_type="manual",
         status=booking_status,
+        reservation_fee_amount=reservation_fee_amount,
         start_time=selected_slot.start_time,
         end_time=selected_slot.end_time,
         hold_expires_at=(
@@ -626,6 +634,7 @@ def create_manual_slot_booking(
             start_time=start_time,
             target_soc=target_soc,
             ip_address=ip_address,
+            booking_status=BookingStatus.HELD,
         )
     )
     return ManualSlotBookingResponse(
@@ -638,6 +647,7 @@ def create_manual_slot_booking(
         energy_required_kwh=energy_required_kwh,
         estimated_charging_time_minutes=charging_time_minutes,
         slot_length_minutes=slot_length_minutes,
+        reservation_fee_amount=booking.reservation_fee_amount,
         start_time=ensure_utc(booking.start_time),
         end_time=ensure_utc(booking.end_time),
         status=booking.status.value,
@@ -675,6 +685,7 @@ def create_slot_hold(
         start_time=ensure_utc(booking.start_time),
         end_time=ensure_utc(booking.end_time),
         status=booking.status.value,
+        reservation_fee_amount=booking.reservation_fee_amount,
         hold_expires_at=ensure_utc(booking.hold_expires_at),
     )
 
@@ -856,7 +867,7 @@ def cancel_booking(
         )
         fee_amount = round(estimated_cost * 0.10, 2)
 
-    booking.status = BookingStatus.CANCELLED
+    transition_booking_status(booking, BookingStatus.CANCELLED)
     booking.cancellation_fee_amount = fee_amount
     db.query(BookingSlotClaim).filter(
         BookingSlotClaim.booking_id == booking.id

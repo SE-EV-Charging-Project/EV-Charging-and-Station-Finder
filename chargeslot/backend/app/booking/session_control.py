@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.permissions import enforce_operator_scope
 from app.gateway.ingest import _ensure_utc, validate_observed_at
 from app.models.booking import Booking, BookingStatus
+from app.models.booking_slot_claim import BookingSlotClaim
 from app.models.charger import Charger, Connector
 from app.models.charging_session_command import (
     ChargingSessionCommand,
@@ -22,6 +23,7 @@ from app.schemas.session import (
     SessionStopTransactionRequest,
     SessionStopTransactionResponse,
 )
+from app.booking.state import transition_booking_status
 
 
 def _role_value(user: User) -> str:
@@ -433,7 +435,10 @@ def record_session_stop_transaction(
         )
 
     booking = matching_bookings[0]
-    booking.status = BookingStatus.COMPLETED
+    transition_booking_status(booking, BookingStatus.COMPLETED)
+    db.query(BookingSlotClaim).filter(
+        BookingSlotClaim.booking_id == booking.id
+    ).delete(synchronize_session=False)
     booking.session_ended_at = observed_at
     booking.session_transaction_id = payload.transaction_id
     booking.meter_stop_wh = payload.meter_stop_wh

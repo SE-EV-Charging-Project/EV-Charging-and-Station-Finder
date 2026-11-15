@@ -4,6 +4,7 @@ Booking Schemas (Feature 3: Battery-Aware Booking and Auto-Booking / CS19-055 / 
 
 import math
 from datetime import datetime
+from typing import Literal
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -198,7 +199,7 @@ class ManualSlotBookingRequest(BaseModel):
 
 
 class ManualSlotBookingResponse(BaseModel):
-    """Confirmed manual booking and the resulting charging estimate."""
+    """Held manual booking, reservation fee, and the resulting charging estimate."""
 
     booking_id: int
     station_id: int
@@ -209,6 +210,7 @@ class ManualSlotBookingResponse(BaseModel):
     energy_required_kwh: float
     estimated_charging_time_minutes: float
     slot_length_minutes: int
+    reservation_fee_amount: float
     start_time: datetime
     end_time: datetime
     status: str
@@ -224,7 +226,31 @@ class SlotHoldResponse(BaseModel):
     start_time: datetime
     end_time: datetime
     status: str
+    reservation_fee_amount: float
     hold_expires_at: datetime
+
+
+class PaymentConfirmationWebhookRequest(BaseModel):
+    """Verified payment-provider event for a held booking reservation fee."""
+
+    provider_event_id: str = Field(..., min_length=1, max_length=120)
+    provider_reference: str | None = Field(default=None, max_length=120)
+    amount_inr: float = Field(..., ge=0, allow_inf_nan=False)
+    currency: Literal["INR"] = "INR"
+    status: Literal["Succeeded", "Failed"]
+
+
+class PaymentConfirmationResponse(BaseModel):
+    """Result of recording a provider-verified reservation payment event."""
+
+    booking_id: int
+    booking_status: str
+    payment_status: str
+    reservation_fee_amount: float
+    booking_reference: str | None = None
+    qr_code_payload: str | None = None
+    refund_due_amount: float = 0.0
+    message: str
 
 
 class BookingModificationRequest(BaseModel):

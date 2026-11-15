@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     PASSWORD_RESET_EXPIRE_MINUTES: int = 15     # 15 minutes reset code expiry (CS19-006)
     GATEWAY_WEBHOOK_SECRET: str = "dev_ocpp_gateway_secret_change_in_production"
     GATEWAY_STALE_STATUS_LIMIT_SECONDS: int = 120
+    PAYMENT_WEBHOOK_SECRET: str = ""
     DATABASE_URL: str = "sqlite:///./chargeslot.db"
     ROUTING_SERVICE_URL: str = "http://localhost:5000"
 
