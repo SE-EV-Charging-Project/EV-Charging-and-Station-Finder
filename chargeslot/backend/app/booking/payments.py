@@ -14,6 +14,7 @@ from app.models.booking_payment_event import (
 )
 from app.models.booking_slot_claim import BookingSlotClaim
 from app.models.station import Station
+from app.services.notification_service import create_in_app_notification
 from app.schemas.booking import (
     PaymentConfirmationResponse,
     PaymentConfirmationWebhookRequest,
@@ -128,6 +129,22 @@ def record_payment_confirmation(
         )
         if amount_matches and hold_is_valid:
             transition_booking_status(booking, BookingStatus.CONFIRMED)
+            create_in_app_notification(
+                db,
+                user_id=booking.user_id,
+                notification_type="booking_confirmed",
+                title="Booking confirmed",
+                message=(
+                    f"Your charging booking is confirmed for "
+                    f"{ensure_utc(booking.start_time).isoformat()}."
+                ),
+                payload={
+                    "booking_id": booking.id,
+                    "start_time": ensure_utc(booking.start_time).isoformat(),
+                    "end_time": ensure_utc(booking.end_time).isoformat(),
+                },
+                dedupe_key=f"booking-confirmed:{booking.id}",
+            )
             message = "Reservation payment verified; booking confirmed."
         else:
             event.refund_due = True

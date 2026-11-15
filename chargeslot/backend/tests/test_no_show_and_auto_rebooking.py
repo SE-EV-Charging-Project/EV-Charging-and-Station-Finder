@@ -335,3 +335,108 @@ def test_fault_without_alternative_cancels_and_marks_full_refund_due(
         scenario["booking"].reservation_fee_amount
         == scenario["payment"].amount_inr
     )
+    cancellation_notice = (
+        client.get(
+            "/api/v1/notifications",
+            headers=_auth_header(scenario["driver"]),
+        )
+        .json()["notifications"][0]
+    )
+    assert cancellation_notice["notification_type"] == "booking_cancelled"
+
+
+def test_booking_reminders_and_idle_fees_are_deduplicated_and_accrue(
+    db_session, faultable_booking
+):
+    from app.booking.lifecycle_notifications import (
+        sweep_booking_reminders_and_idle_fees,
+    )
+    from app.stations.slots import ensure_utc
+
+    booking = faultable_booking["booking"]
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    booking.start_time = now + timedelta(minutes=20)
+    db_session.commit()
+
+    reminders, fees = sweep_booking_reminders_and_idle_fees(
+        db_session,
+        now=now,
+    )
+    assert reminders == [booking.id]
+    assert fees == []
+    assert (
+        db_session.query(InAppNotification)
+        .filter_by(dedupe_key=f"booking-reminder:{booking.id}")
+        .count()
+        == 1
+    )
+    sweep_booking_reminders_and_idle_fees(db_session, now=now)
+    assert (
+        db_session.query(InAppNotification)
+        .filter_by(dedupe_key=f"booking-reminder:{booking.id}")
+        .count()
+        == 1
+    )
+
+    booking.status = BookingStatus.COMPLETED
+    booking.session_ended_at = now
+    booking.start_time = now - timedelta(hours=1)
+    faultable_booking["connector"].status = ConnectorStatus.OCCUPIED
+    db_session.commit()
+
+    sweep_booking_reminders_and_idle_fees(db_session, now=now + timedelta(minutes=6))
+    db_session.refresh(booking)
+    assert booking.idle_fee_started_at is None
+    assert (
+        db_session.query(InAppNotification)
+        .filter_by(dedupe_key=f"idle-fee-reminder:{booking.id}")
+        .count()
+        == 1
+    )
+
+    sweep_booking_reminders_and_idle_fees(db_session, now=now + timedelta(minutes=11))
+    db_session.refresh(booking)
+    assert ensure_utc(booking.idle_fee_started_at) == now + timedelta(minutes=10)
+    assert booking.idle_fee_amount == 50.0
+    assert (
+        db_session.query(InAppNotification)
+        .filter_by(dedupe_key=f"idle-fee-started:{booking.id}")
+        .count()
+        == 1
+    )
+
+    sweep_booking_reminders_and_idle_fees(db_session, now=now + timedelta(minutes=12))
+    db_session.refresh(booking)
+    assert booking.idle_fee_amount == 100.0
+
+
+def test_idle_fee_stops_when_connector_becomes_available(
+    db_session, faultable_booking
+):
+    from app.booking.lifecycle_notifications import finish_idle_fees_for_connector
+    from app.stations.slots import ensure_utc
+
+    booking = faultable_booking["booking"]
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    booking.status = BookingStatus.COMPLETED
+    booking.session_ended_at = now - timedelta(minutes=12)
+    booking.idle_fee_started_at = now - timedelta(minutes=2)
+    faultable_booking["connector"].status = ConnectorStatus.OCCUPIED
+    db_session.commit()
+
+    finished_ids = finish_idle_fees_for_connector(
+        db_session,
+        connector_id=faultable_booking["connector"].id,
+        ended_at=now,
+    )
+    db_session.commit()
+
+    assert finished_ids == [booking.id]
+    assert ensure_utc(booking.idle_fee_ended_at) == now
+    assert booking.idle_fee_amount == 100.0
+    assert (
+        db_session.query(InAppNotification)
+        .filter_by(dedupe_key=f"idle-fee-ended:{booking.id}")
+        .count()
+        == 1
+    )

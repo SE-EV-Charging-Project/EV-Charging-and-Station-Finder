@@ -5,6 +5,8 @@ import pytest
 from app.core.config import settings
 from app.models.booking import Booking, BookingStatus
 from app.models.charger import Charger, Connector, ConnectorStatus, CurrentType
+from app.models.charging_session_reading import ChargingSessionReading
+from app.models.in_app_notification import InAppNotification
 from app.models.station import Station, StationStatus
 from app.models.user import User, UserRole
 from app.models.vehicle import ConnectorType, Vehicle
@@ -206,7 +208,7 @@ def test_remote_start_requires_checkin_and_booking_owner(client, db_session, rea
 
 
 def test_remote_start_rejection_offers_alternative_and_start_is_idempotent(
-    client, ready_booking
+    client, db_session, ready_booking
 ):
     booking = ready_booking["booking"]
     driver_headers = _auth_header(ready_booking["driver"])
@@ -272,6 +274,12 @@ def test_remote_start_rejection_offers_alternative_and_start_is_idempotent(
     assert started.status_code == 200
     assert started.json()["status"] == "Active"
     assert started.json()["applied"] is True
+    assert (
+        db_session.query(InAppNotification)
+        .filter_by(dedupe_key=f"session-started:{booking.id}")
+        .count()
+        == 1
+    )
 
     replay = client.post(
         "/api/v1/gateway/ocpp/1.6j/start-transaction",
@@ -280,3 +288,35 @@ def test_remote_start_rejection_offers_alternative_and_start_is_idempotent(
     )
     assert replay.status_code == 200
     assert replay.json()["idempotent_replay"] is True
+
+    db_session.add(
+        ChargingSessionReading(
+            booking_id=booking.id,
+            charger_id=ready_booking["charger"].id,
+            connector_id=ready_booking["connectors"][1].id,
+            transaction_id=12345,
+            power_kw=50.0,
+            energy_meter_kwh=20.0,
+            observed_at=datetime.now(timezone.utc),
+        )
+    )
+    db_session.commit()
+    stopped = client.post(
+        "/api/v1/gateway/ocpp/1.6j/stop-transaction",
+        json={
+            "gateway_id": ready_booking["charger"].gateway_id,
+            "transaction_id": 12345,
+            "meter_stop_wh": 20000,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "idempotency_key": "stop-event-12345",
+        },
+        headers=_gateway_headers(),
+    )
+    assert stopped.status_code == 200
+    assert stopped.json()["status"] == "Completed"
+    assert (
+        db_session.query(InAppNotification)
+        .filter_by(dedupe_key=f"session-completed:{booking.id}")
+        .count()
+        == 1
+    )

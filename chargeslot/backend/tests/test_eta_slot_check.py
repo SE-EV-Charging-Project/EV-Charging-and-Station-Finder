@@ -29,6 +29,7 @@ from starlette.testclient import TestClient
 
 from app.models.booking import Booking, BookingStatus
 from app.models.charger import Charger, Connector, ConnectorStatus, ConnectorType, CurrentType
+from app.models.in_app_notification import InAppNotification
 from app.models.station import Station, StationStatus
 from app.models.user import User, UserRole
 from app.navigation.eta import (
@@ -243,6 +244,12 @@ class TestETASlotCheckServiceLogic:
         assert resp.can_extend is True
         assert resp.can_cancel is True
         assert len(resp.reschedule_options) > 0
+        assert (
+            db_session.query(InAppNotification)
+            .filter_by(dedupe_key=f"eta-warning:{booking.id}:{slot_start.isoformat()}")
+            .count()
+            == 1
+        )
 
     def test_configurable_grace_period(self, db_session):
         operator = _make_user(db_session, name="Op ETA4", email="opeta4@test.com", phone="9000000207", role=UserRole.OPERATOR)

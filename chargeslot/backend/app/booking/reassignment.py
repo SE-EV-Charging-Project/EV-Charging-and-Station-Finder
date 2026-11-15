@@ -291,7 +291,7 @@ def handle_faulted_connector(
             create_in_app_notification(
                 db,
                 user_id=booking.user_id,
-                notification_type="booking_fault_refund_due",
+                notification_type="booking_cancelled",
                 title="Booking cancelled after charger fault",
                 message=(
                     "No compatible available alternative was found. Your booking "

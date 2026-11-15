@@ -10,6 +10,9 @@ from app.db.session import SessionLocal
 from app.booking.state import transition_booking_status
 from app.models.booking import Booking, BookingStatus
 from app.models.booking_slot_claim import BookingSlotClaim
+from app.booking.lifecycle_notifications import (
+    sweep_booking_reminders_and_idle_fees,
+)
 from app.services.notification_service import create_in_app_notification
 
 NO_SHOW_GRACE_PERIOD = timedelta(minutes=15)
@@ -87,6 +90,13 @@ async def run_no_show_sweeper() -> None:
             processed_ids = sweep_no_show_bookings(db)
             if processed_ids:
                 logger.info("Marked bookings as no-show: %s", processed_ids)
+            reminder_ids, idle_fee_ids = sweep_booking_reminders_and_idle_fees(db)
+            if reminder_ids or idle_fee_ids:
+                logger.info(
+                    "Processed booking reminders %s and idle fees %s.",
+                    reminder_ids,
+                    idle_fee_ids,
+                )
         except SQLAlchemyError:
             db.rollback()
             logger.exception("No-show booking sweep failed.")

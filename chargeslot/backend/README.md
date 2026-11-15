@@ -246,3 +246,9 @@ After check-in, the booking owner or an Admin requests a start at `POST /api/v1/
 The application sweeps confirmed and reassigned bookings every 60 seconds. A booking without check-in is marked `No-Show` once its start time is at least 15 minutes past, its slot claims are released, and the reservation fee (minimum INR 1) is recorded as due in `cancellation_fee_amount`. Check-in after the 15-minute grace period is rejected.
 
 When an OCPP status update changes a connector to `Faulted`, future confirmed bookings assigned to that charger are moved to the nearest approved active station with an available compatible connector that can serve the same time slot. The booking keeps its existing payment and slot time, is marked `Reassigned`, and requires check-in again. If no alternative is available, the booking is cancelled, its slot claims are released, and every successful reservation payment is marked `refund_due`; this is a ledger only and does not move funds. Drivers can read these persistent in-app notifications at `GET /api/v1/notifications` and mark one read with `PATCH /api/v1/notifications/{notification_id}/read`.
+
+### Booking Notifications and Idle Fees (REQ-F3-32 / REQ-F3-33)
+
+Drivers receive in-app notifications for booking confirmation, a 30-minute pre-booking reminder, late-arrival ETA warnings, session start and completion, and cancellations. Notifications are persistent, user-scoped, and idempotently deduplicated.
+
+After an OCPP `StopTransaction`, the system sends an idle-fee reminder at five minutes if the connector remains occupied. At ten minutes, idle fees accrue at the configured `IDLE_FEE_RATE_INR_PER_MINUTE` (default INR 50/minute). Accrual stops when the connector reports `Available`; the final amount is stored on the booking and shown in an in-app notification. This records the payable amount but does not itself capture payment.

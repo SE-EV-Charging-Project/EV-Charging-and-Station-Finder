@@ -25,6 +25,7 @@ from app.models.charger import Charger, Connector, ConnectorStatus, CurrentType
 from app.models.maintenance import MaintenanceWindow
 from app.models.station import Station, StationStatus
 from app.models.user import User, UserRole
+from app.services.notification_service import create_in_app_notification
 from app.models.vehicle import Vehicle
 from app.schemas.booking import (
     AutoBookResponse,
@@ -1116,6 +1117,21 @@ def cancel_booking(
     db.query(BookingSlotClaim).filter(
         BookingSlotClaim.booking_id == booking.id
     ).delete(synchronize_session=False)
+    create_in_app_notification(
+        db,
+        user_id=booking.user_id,
+        notification_type="booking_cancelled",
+        title="Booking cancelled",
+        message=(
+            "Your booking was cancelled. "
+            f"The cancellation fee due is INR {fee_amount:.2f}."
+        ),
+        payload={
+            "booking_id": booking.id,
+            "cancellation_fee_amount_inr": fee_amount,
+        },
+        dedupe_key=f"booking-cancelled:{booking.id}",
+    )
     db.commit()
     db.refresh(booking)
 

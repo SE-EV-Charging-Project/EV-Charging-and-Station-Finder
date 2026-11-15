@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.models.booking import Booking, BookingStatus
 from app.models.booking_payment_event import BookingPaymentEvent
 from app.models.booking_slot_claim import BookingSlotClaim
+from app.models.in_app_notification import InAppNotification
 from app.models.user import User, UserRole
 from app.schemas.booking import PaymentConfirmationWebhookRequest
 
@@ -79,6 +80,15 @@ def test_successful_payment_confirms_booking_and_keeps_slot_claim(db_session):
     assert response.booking_reference == f"CS-{booking.id:08d}"
     assert response.qr_code_payload is not None
     assert db_session.query(BookingSlotClaim).filter_by(booking_id=booking.id).count() == 1
+    notifications = (
+        db_session.query(InAppNotification)
+        .filter_by(
+            user_id=booking.user_id,
+            dedupe_key=f"booking-confirmed:{booking.id}",
+        )
+        .all()
+    )
+    assert len(notifications) == 1
 
 
 def test_payment_event_replay_is_idempotent(db_session):

@@ -10,6 +10,7 @@ from app.models.charger import Charger
 from app.models.maintenance import MaintenanceWindow
 from app.models.booking import Booking, BookingStatus
 from app.models.booking_slot_claim import BookingSlotClaim
+from app.services.notification_service import create_in_app_notification
 from app.booking.state import transition_booking_status
 from app.schemas.maintenance import (
     MaintenanceWindowCreateRequest,
@@ -101,6 +102,21 @@ class MaintenanceService:
             db.query(BookingSlotClaim).filter(
                 BookingSlotClaim.booking_id == b.id
             ).delete(synchronize_session=False)
+            create_in_app_notification(
+                db,
+                user_id=b.user_id,
+                notification_type="booking_cancelled",
+                title="Booking cancelled due to maintenance",
+                message=(
+                    f"Your booking was cancelled because of the "
+                    f"'{window.title}' maintenance window."
+                ),
+                payload={
+                    "booking_id": b.id,
+                    "maintenance_window_id": window.id,
+                },
+                dedupe_key=f"booking-cancelled-maintenance:{b.id}:{window.id}",
+            )
             AuditService.log_action(
                 db=db,
                 user_id=user.id,

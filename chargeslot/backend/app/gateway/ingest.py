@@ -299,6 +299,19 @@ def ingest_status(
             fault_event_id=event.id,
             now=obs_utc,
         )
+    if (
+        mapped_status == ConnectorStatus.AVAILABLE
+        and previous_status != ConnectorStatus.AVAILABLE
+    ):
+        from app.booking.lifecycle_notifications import (
+            finish_idle_fees_for_connector,
+        )
+
+        finish_idle_fees_for_connector(
+            db,
+            connector_id=connector.id,
+            ended_at=obs_utc,
+        )
 
     AuditService.log_action(
         db=db,
