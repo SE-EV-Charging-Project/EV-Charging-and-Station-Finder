@@ -12,6 +12,7 @@ from app.api.v1.endpoints import (
     dashboard,
     bookings,
     navigation,
+    notifications,
 )
 
 api_router = APIRouter()
@@ -27,6 +28,7 @@ api_router.include_router(maintenance.router)
 api_router.include_router(gateway.router)
 api_router.include_router(bookings.router)
 api_router.include_router(navigation.router)
+api_router.include_router(notifications.router)
 
 
 

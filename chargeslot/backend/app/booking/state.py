@@ -22,7 +22,11 @@ _ALLOWED_TRANSITIONS: dict[BookingStatus, set[BookingStatus]] = {
     BookingStatus.CANCELLED: set(),
     BookingStatus.NO_SHOW: set(),
     BookingStatus.EXPIRED: set(),
-    BookingStatus.REASSIGNED: set(),
+    BookingStatus.REASSIGNED: {
+        BookingStatus.ACTIVE,
+        BookingStatus.CANCELLED,
+        BookingStatus.NO_SHOW,
+    },
 }
 
 

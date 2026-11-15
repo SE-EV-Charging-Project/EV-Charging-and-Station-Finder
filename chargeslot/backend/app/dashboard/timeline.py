@@ -244,6 +244,7 @@ def get_station_slot_timeline(
     # Fetch active bookings for this station on this day
     active_booking_statuses = [
         BookingStatus.CONFIRMED,
+        BookingStatus.REASSIGNED,
         BookingStatus.HELD,
         BookingStatus.ACTIVE,
     ]

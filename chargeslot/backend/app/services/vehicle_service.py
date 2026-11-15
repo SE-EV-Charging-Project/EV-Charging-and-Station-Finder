@@ -280,6 +280,7 @@ class VehicleService:
         active_statuses = [
             BookingStatus.HELD,
             BookingStatus.CONFIRMED,
+            BookingStatus.REASSIGNED,
             BookingStatus.ACTIVE,
         ]
         bookings = (

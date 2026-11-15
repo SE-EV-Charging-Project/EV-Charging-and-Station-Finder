@@ -86,7 +86,9 @@ def find_confirmed_booking_for_connector(
         db.query(Booking)
         .filter(
             Booking.connector_id == connector.id,
-            Booking.status == BookingStatus.CONFIRMED,
+            Booking.status.in_(
+                [BookingStatus.CONFIRMED, BookingStatus.REASSIGNED]
+            ),
             or_(
                 and_(Booking.start_time >= now, Booking.start_time <= window_end),
                 and_(Booking.start_time <= now, Booking.end_time > now),
@@ -109,7 +111,9 @@ def find_confirmed_booking_for_connector(
         .filter(
             Booking.charger_id == target_charger_id,
             Booking.connector_id.is_(None),
-            Booking.status == BookingStatus.CONFIRMED,
+            Booking.status.in_(
+                [BookingStatus.CONFIRMED, BookingStatus.REASSIGNED]
+            ),
             or_(
                 and_(Booking.start_time >= now, Booking.start_time <= window_end),
                 and_(Booking.start_time <= now, Booking.end_time > now),

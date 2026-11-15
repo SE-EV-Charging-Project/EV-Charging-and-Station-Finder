@@ -285,6 +285,21 @@ def ingest_status(
     db.add(event)
     db.flush()
 
+    reassigned_booking_ids: list[int] = []
+    if (
+        mapped_status == ConnectorStatus.FAULTED
+        and previous_status != ConnectorStatus.FAULTED
+    ):
+        from app.booking.reassignment import handle_faulted_connector
+
+        reassigned_booking_ids = handle_faulted_connector(
+            db,
+            connector=connector,
+            charger=charger,
+            fault_event_id=event.id,
+            now=obs_utc,
+        )
+
     AuditService.log_action(
         db=db,
         user_id=actor_user.id if actor_user else None,
@@ -324,7 +339,12 @@ def ingest_status(
     )
 
     return ConnectorStatusIngestResponse(
-        message="Connector status ingested successfully.",
+        message=(
+            "Connector status ingested successfully; affected bookings were "
+            "reassigned or cancelled."
+            if reassigned_booking_ids
+            else "Connector status ingested successfully."
+        ),
         connector_id=connector.id,
         charger_id=charger.id,
         station_id=station.id,

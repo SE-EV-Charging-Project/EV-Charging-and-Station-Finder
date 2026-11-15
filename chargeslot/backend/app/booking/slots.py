@@ -46,6 +46,7 @@ SLOT_INTERVAL_MINUTES = 15
 ACTIVE_BOOKING_STATUSES = (
     BookingStatus.HELD,
     BookingStatus.CONFIRMED,
+    BookingStatus.REASSIGNED,
     BookingStatus.ACTIVE,
 )
 
@@ -958,10 +959,10 @@ def modify_confirmed_booking(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to modify this booking.",
         )
-    if booking.status != BookingStatus.CONFIRMED:
+    if booking.status not in (BookingStatus.CONFIRMED, BookingStatus.REASSIGNED):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Only confirmed bookings can be modified.",
+            detail="Only confirmed or reassigned bookings can be modified.",
         )
     if booking.station_id is None or booking.vehicle_id is None:
         raise HTTPException(
@@ -1064,7 +1065,11 @@ def cancel_booking(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to cancel this booking.",
         )
-    if booking.status not in (BookingStatus.HELD, BookingStatus.CONFIRMED):
+    if booking.status not in (
+        BookingStatus.HELD,
+        BookingStatus.CONFIRMED,
+        BookingStatus.REASSIGNED,
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only held or confirmed bookings can be cancelled.",
@@ -1076,7 +1081,7 @@ def cancel_booking(
         )
 
     is_late_cancellation = (
-        booking.status == BookingStatus.CONFIRMED
+        booking.status in (BookingStatus.CONFIRMED, BookingStatus.REASSIGNED)
         and ensure_utc(booking.start_time) - now_utc < timedelta(minutes=30)
     )
     fee_amount = 0.0
