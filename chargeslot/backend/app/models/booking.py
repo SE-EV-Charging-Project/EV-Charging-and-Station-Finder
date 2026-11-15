@@ -92,6 +92,15 @@ class Booking(Base):
     session_ended_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    idle_fee_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    idle_fee_ended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    idle_fee_amount: Mapped[float] = mapped_column(
+        Float, default=0.0, nullable=False
+    )
     session_transaction_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     meter_stop_wh: Mapped[int | None] = mapped_column(Integer, nullable=True)
     stop_event_idempotency_key: Mapped[str | None] = mapped_column(

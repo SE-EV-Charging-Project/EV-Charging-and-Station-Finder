@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +17,7 @@ class Settings(BaseSettings):
     PAYMENT_WEBHOOK_SECRET: str = ""
     DATABASE_URL: str = "sqlite:///./chargeslot.db"
     ROUTING_SERVICE_URL: str = "http://localhost:5000"
+    IDLE_FEE_RATE_INR_PER_MINUTE: float = Field(default=50.0, gt=0)
 
     model_config = SettingsConfigDict(
         env_file=".env",

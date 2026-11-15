@@ -7,7 +7,7 @@ from app.core.permissions import enforce_operator_scope
 from app.gateway.ingest import _ensure_utc, validate_observed_at
 from app.models.booking import Booking, BookingStatus
 from app.models.booking_slot_claim import BookingSlotClaim
-from app.models.charger import Charger, Connector
+from app.models.charger import Charger, Connector, ConnectorStatus
 from app.models.charging_session_command import (
     ChargingSessionCommand,
     SessionStopCommandStatus,
@@ -24,6 +24,7 @@ from app.schemas.session import (
     SessionStopTransactionResponse,
 )
 from app.booking.state import transition_booking_status
+from app.services.notification_service import create_in_app_notification
 
 
 def _role_value(user: User) -> str:
@@ -443,6 +444,26 @@ def record_session_stop_transaction(
     booking.session_transaction_id = payload.transaction_id
     booking.meter_stop_wh = payload.meter_stop_wh
     booking.stop_event_idempotency_key = idempotency_key
+    connector = (
+        db.query(Connector).filter(Connector.id == booking.connector_id).first()
+        if booking.connector_id is not None
+        else None
+    )
+    if connector is not None and connector.status == ConnectorStatus.AVAILABLE:
+        booking.idle_fee_ended_at = observed_at
+    create_in_app_notification(
+        db,
+        user_id=booking.user_id,
+        notification_type="session_completed",
+        title="Charging session completed",
+        message="Your charging session has ended.",
+        payload={
+            "booking_id": booking.id,
+            "transaction_id": payload.transaction_id,
+            "session_ended_at": observed_at.isoformat(),
+        },
+        dedupe_key=f"session-completed:{booking.id}",
+    )
     commands = (
         db.query(ChargingSessionCommand)
         .filter(

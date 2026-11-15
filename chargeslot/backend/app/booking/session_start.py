@@ -16,6 +16,7 @@ from app.models.charging_session_start_command import (
 from app.models.station import Station
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
+from app.services.notification_service import create_in_app_notification
 from app.schemas.session import (
     GatewaySessionStartResultRequest,
     PendingSessionStartCommandsResponse,
@@ -431,6 +432,19 @@ def record_session_start_transaction(
     command.start_event_idempotency_key = event_key
     command.started_at = observed_at
     command.responded_at = observed_at
+    create_in_app_notification(
+        db,
+        user_id=booking.user_id,
+        notification_type="session_started",
+        title="Charging session started",
+        message="Your charging session has started.",
+        payload={
+            "booking_id": booking.id,
+            "transaction_id": payload.transaction_id,
+            "started_at": observed_at.isoformat(),
+        },
+        dedupe_key=f"session-started:{booking.id}",
+    )
     db.commit()
     db.refresh(booking)
     return SessionStartTransactionResponse(

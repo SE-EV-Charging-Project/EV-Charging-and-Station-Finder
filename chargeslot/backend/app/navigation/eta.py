@@ -16,6 +16,7 @@ from app.models.booking import Booking, BookingStatus
 from app.models.charger import Charger, Connector, ConnectorStatus
 from app.models.station import Station, StationStatus
 from app.models.user import User, UserRole
+from app.services.notification_service import create_in_app_notification
 from app.navigation.routes import (
     calculate_route_preview,
     normalize_traffic_condition,
@@ -244,6 +245,23 @@ def check_driver_eta_versus_slot(
             connector_id=booking.connector_id,
             after_time=estimated_arrival,
         )
+
+    if is_late and warning_msg is not None:
+        create_in_app_notification(
+            db,
+            user_id=booking.user_id,
+            notification_type="eta_warning",
+            title="Late arrival warning",
+            message=warning_msg,
+            payload={
+                "booking_id": booking.id,
+                "estimated_arrival_time": estimated_arrival.isoformat(),
+                "slot_start_time": slot_start.isoformat(),
+                "delay_minutes": delay_minutes,
+            },
+            dedupe_key=f"eta-warning:{booking.id}:{slot_start.isoformat()}",
+        )
+        db.commit()
 
     now = datetime.now(timezone.utc)
     return ETASlotCheckResponse(
