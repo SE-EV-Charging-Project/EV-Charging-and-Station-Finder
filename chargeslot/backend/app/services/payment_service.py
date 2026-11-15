@@ -7,14 +7,18 @@ from decimal import Decimal, ROUND_HALF_UP
 import httpx
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
-from app.models.user import User
+from app.models.user import User, UserRole
+from app.models.saved_payment_method import SavedPaymentMethod
 from app.schemas.payment import (
     PaymentOrderRequest,
     PaymentOrderResponse,
     PaymentVerificationRequest,
     PaymentVerificationResponse,
+    SavedPaymentMethodCreate,
+    SavedPaymentMethodResponse,
 )
 from app.services.booking_service import BookingService
 
@@ -187,3 +191,137 @@ class PaymentService:
             verified=True,
             message="Payment successfully verified and captured.",
         )
+
+    @staticmethod
+    def _require_driver(user: User) -> None:
+        if user.role != UserRole.DRIVER:
+            raise HTTPException(
+                status_code=403,
+                detail="Only drivers can manage saved payment methods.",
+            )
+
+    @staticmethod
+    def save_payment_method(
+        db: Session,
+        user: User,
+        data: SavedPaymentMethodCreate,
+    ) -> SavedPaymentMethodResponse:
+        PaymentService._require_driver(user)
+
+        existing = (
+            db.query(SavedPaymentMethod)
+            .filter(
+                SavedPaymentMethod.user_id == user.id,
+                SavedPaymentMethod.gateway == "razorpay",
+                SavedPaymentMethod.token_reference == data.token_reference,
+            )
+            .first()
+        )
+
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail="This payment method is already saved.",
+            )
+
+        has_saved_methods = (
+            db.query(SavedPaymentMethod)
+            .filter(SavedPaymentMethod.user_id == user.id)
+            .first()
+        )
+
+        saved_method = SavedPaymentMethod(
+            user_id=user.id,
+            gateway="razorpay",
+            token_reference=data.token_reference,
+            customer_reference=data.customer_reference,
+            method_type=data.method_type,
+            card_network=data.card_network,
+            last4=data.last4,
+            is_default=not bool(has_saved_methods),
+        )
+
+        try:
+            db.add(saved_method)
+            db.commit()
+            db.refresh(saved_method)
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="This payment token is already registered.",
+            )
+
+        return SavedPaymentMethodResponse(
+            id=saved_method.id,
+            method_type=saved_method.method_type,
+            card_network=saved_method.card_network,
+            last4=saved_method.last4,
+            is_default=saved_method.is_default,
+            created_at=saved_method.created_at,
+        )
+
+    @staticmethod
+    def list_saved_payment_methods(
+        db: Session,
+        user: User,
+    ) -> list[SavedPaymentMethodResponse]:
+        PaymentService._require_driver(user)
+
+        methods = (
+            db.query(SavedPaymentMethod)
+            .filter(SavedPaymentMethod.user_id == user.id)
+            .order_by(SavedPaymentMethod.created_at.desc())
+            .all()
+        )
+
+        return [
+            SavedPaymentMethodResponse(
+                id=method.id,
+                method_type=method.method_type,
+                card_network=method.card_network,
+                last4=method.last4,
+                is_default=method.is_default,
+                created_at=method.created_at,
+            )
+            for method in methods
+        ]
+
+    @staticmethod
+    def delete_saved_payment_method(
+        db: Session,
+        user: User,
+        payment_method_id: int,
+    ) -> None:
+        PaymentService._require_driver(user)
+
+        saved_method = (
+            db.query(SavedPaymentMethod)
+            .filter(
+                SavedPaymentMethod.id == payment_method_id,
+                SavedPaymentMethod.user_id == user.id,
+            )
+            .first()
+        )
+
+        if not saved_method:
+            raise HTTPException(
+                status_code=404,
+                detail="Saved payment method not found.",
+            )
+
+        was_default = saved_method.is_default
+        db.delete(saved_method)
+        db.flush()
+
+        if was_default:
+            replacement = (
+                db.query(SavedPaymentMethod)
+                .filter(SavedPaymentMethod.user_id == user.id)
+                .order_by(SavedPaymentMethod.created_at.desc())
+                .first()
+            )
+            if replacement:
+                replacement.is_default = True
+
+        db.commit()

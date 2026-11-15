@@ -13,8 +13,10 @@ from app.schemas.payment import (
     PaymentMethod,
     PaymentOrderRequest,
     PaymentVerificationRequest,
+    SavedPaymentMethodCreate,
 )
 from app.services.payment_service import PaymentService
+from app.models.user import User, UserRole
 
 
 def test_payment_methods_validation():
@@ -248,3 +250,140 @@ def test_uncaptured_payment_rejected(monkeypatch):
         )
 
     assert exc.value.status_code == 400
+
+def create_test_user(db, user_id, role=UserRole.DRIVER):
+    user = User(
+        name=f"Test User {user_id}",
+        email=f"payment-test-{user_id}@example.com",
+        phone=f"90000000{user_id:02d}",
+        hashed_password="test-hash",
+        role=role,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def valid_saved_method(**overrides):
+    data = {
+        "token_reference": "token_test_123",
+        "customer_reference": "customer_test_123",
+        "method_type": "card",
+        "card_network": "Visa",
+        "last4": "4242",
+        "customer_consent": True,
+    }
+    data.update(overrides)
+    return SavedPaymentMethodCreate(**data)
+
+
+def test_saved_payment_method_schema_rejects_invalid_data():
+    with pytest.raises(ValidationError):
+        valid_saved_method(last4="12A4")
+
+    with pytest.raises(ValidationError):
+        valid_saved_method(customer_consent=False)
+
+    with pytest.raises(ValidationError):
+        valid_saved_method(method_type="upi")
+
+    with pytest.raises(ValidationError):
+        valid_saved_method(card_number="4111111111111111")
+
+    with pytest.raises(ValidationError):
+        valid_saved_method(cvv="123")
+
+
+def test_saved_payment_method_crud_and_default_promotion(db_session):
+    user = create_test_user(db_session, 10)
+
+    first = PaymentService.save_payment_method(
+        db_session,
+        user,
+        valid_saved_method(),
+    )
+    assert first.is_default is True
+    assert first.last4 == "4242"
+
+    second = PaymentService.save_payment_method(
+        db_session,
+        user,
+        valid_saved_method(
+            token_reference="token_test_456",
+            last4="1111",
+        ),
+    )
+    assert second.is_default is False
+
+    methods = PaymentService.list_saved_payment_methods(db_session, user)
+    assert len(methods) == 2
+    assert all(not hasattr(method, "token_reference") for method in methods)
+
+    PaymentService.delete_saved_payment_method(
+        db_session,
+        user,
+        first.id,
+    )
+
+    remaining = PaymentService.list_saved_payment_methods(db_session, user)
+    assert len(remaining) == 1
+    assert remaining[0].id == second.id
+    assert remaining[0].is_default is True
+
+
+def test_saved_payment_method_duplicate_token_rejected(db_session):
+    user = create_test_user(db_session, 11)
+
+    PaymentService.save_payment_method(
+        db_session,
+        user,
+        valid_saved_method(),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        PaymentService.save_payment_method(
+            db_session,
+            user,
+            valid_saved_method(),
+        )
+
+    assert exc.value.status_code == 409
+
+
+def test_saved_payment_methods_restricted_to_drivers(db_session):
+    operator = create_test_user(db_session, 12, UserRole.OPERATOR)
+
+    with pytest.raises(HTTPException) as exc:
+        PaymentService.save_payment_method(
+            db_session,
+            operator,
+            valid_saved_method(),
+        )
+
+    assert exc.value.status_code == 403
+
+
+def test_user_cannot_delete_another_users_saved_method(db_session):
+    owner = create_test_user(db_session, 13)
+    another_user = create_test_user(db_session, 14)
+
+    saved = PaymentService.save_payment_method(
+        db_session,
+        owner,
+        valid_saved_method(),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        PaymentService.delete_saved_payment_method(
+            db_session,
+            another_user,
+            saved.id,
+        )
+
+    assert exc.value.status_code == 404
+
+    # The original owner's method must still exist.
+    methods = PaymentService.list_saved_payment_methods(db_session, owner)
+    assert len(methods) == 1
+    assert methods[0].id == saved.id
