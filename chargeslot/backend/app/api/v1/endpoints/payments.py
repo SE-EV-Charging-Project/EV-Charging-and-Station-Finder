@@ -1,5 +1,4 @@
-
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -11,6 +10,8 @@ from app.schemas.payment import (
     PaymentOrderResponse,
     PaymentVerificationRequest,
     PaymentVerificationResponse,
+    SavedPaymentMethodCreate,
+    SavedPaymentMethodResponse,
 )
 from app.services.payment_service import PaymentService
 
@@ -37,22 +38,53 @@ def create_payment_order(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return PaymentService.create_order(
-        db=db,
-        user=current_user,
-        data=payload,
-    )
+    return PaymentService.create_order(db=db, user=current_user, data=payload)
 
 
-@router.post(
-    "/verify",
-    response_model=PaymentVerificationResponse,
-)
+@router.post("/verify", response_model=PaymentVerificationResponse)
 def verify_payment(
     payload: PaymentVerificationRequest,
     current_user: User = Depends(get_current_user),
 ):
-    return PaymentService.verify_payment(
-        data=payload,
-        user=current_user,
+    return PaymentService.verify_payment(data=payload, user=current_user)
+
+
+@router.post(
+    "/saved-methods",
+    response_model=SavedPaymentMethodResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def save_payment_method(
+    payload: SavedPaymentMethodCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return PaymentService.save_payment_method(
+        db=db, user=current_user, data=payload
     )
+
+
+@router.get(
+    "/saved-methods",
+    response_model=list[SavedPaymentMethodResponse],
+)
+def list_saved_payment_methods(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return PaymentService.list_saved_payment_methods(db=db, user=current_user)
+
+
+@router.delete(
+    "/saved-methods/{payment_method_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_saved_payment_method(
+    payment_method_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    PaymentService.delete_saved_payment_method(
+        db=db, user=current_user, payment_method_id=payment_method_id
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
