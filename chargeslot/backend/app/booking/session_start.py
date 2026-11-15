@@ -104,10 +104,10 @@ def request_session_start(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Booking not found.",
         )
-    if booking.status != BookingStatus.CONFIRMED:
+    if booking.status not in (BookingStatus.CONFIRMED, BookingStatus.REASSIGNED):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Only a confirmed booking can start a charging session.",
+            detail="Only a confirmed or reassigned booking can start a charging session.",
         )
     if booking.checked_in_at is None:
         raise HTTPException(
@@ -414,7 +414,10 @@ def record_session_start_transaction(
             status_code=status.HTTP_409_CONFLICT,
             detail="Rejected or failed start commands cannot start a session.",
         )
-    if booking.status != BookingStatus.CONFIRMED or booking.checked_in_at is None:
+    if (
+        booking.status not in (BookingStatus.CONFIRMED, BookingStatus.REASSIGNED)
+        or booking.checked_in_at is None
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="A checked-in confirmed booking is required to start a session.",

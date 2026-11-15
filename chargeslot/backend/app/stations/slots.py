@@ -272,7 +272,12 @@ def generate_station_bookable_slots(
         .filter(
             Booking.station_id == station.id,
             Booking.status.in_(
-                [BookingStatus.HELD, BookingStatus.CONFIRMED, BookingStatus.ACTIVE]
+                [
+                    BookingStatus.HELD,
+                    BookingStatus.CONFIRMED,
+                    BookingStatus.REASSIGNED,
+                    BookingStatus.ACTIVE,
+                ]
             ),
             Booking.start_time < range_end,
             Booking.end_time > range_start,

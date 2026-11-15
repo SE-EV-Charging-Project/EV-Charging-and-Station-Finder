@@ -32,6 +32,7 @@ from app.models.booking_payment_event import (
     BookingPaymentEvent,
     BookingPaymentEventStatus,
 )
+from app.models.in_app_notification import InAppNotification
 
 __all__ = [
     "User",
@@ -70,4 +71,5 @@ __all__ = [
     "SessionStartCommandStatus",
     "BookingPaymentEvent",
     "BookingPaymentEventStatus",
+    "InAppNotification",
 ]

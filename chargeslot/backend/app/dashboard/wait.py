@@ -218,6 +218,7 @@ def get_station_estimated_wait_time(
     active_statuses = [
         BookingStatus.ACTIVE,
         BookingStatus.CONFIRMED,
+        BookingStatus.REASSIGNED,
         BookingStatus.HELD,
     ]
     bookings_stmt = (

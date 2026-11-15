@@ -82,7 +82,13 @@ class MaintenanceService:
         # Invalidate/cancel any active or confirmed bookings overlapping this window (REQ-F2-06)
         booking_query = db.query(Booking).filter(
             Booking.station_id == station_id,
-            Booking.status.in_([BookingStatus.CONFIRMED, BookingStatus.HELD]),
+            Booking.status.in_(
+                [
+                    BookingStatus.CONFIRMED,
+                    BookingStatus.REASSIGNED,
+                    BookingStatus.HELD,
+                ]
+            ),
             Booking.start_time < end_time_utc,
             Booking.end_time > start_time_utc,
         )
