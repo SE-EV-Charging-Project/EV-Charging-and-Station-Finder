@@ -11,6 +11,7 @@ from app.models.charger import Charger, Connector, CurrentType, ConnectorStatus
 from app.models.maintenance import MaintenanceWindow
 from app.models.favourite import FavouriteStation
 from app.models.review import StationReview
+from app.models.saved_payment_method import SavedPaymentMethod
 from app.models.fault_report import (
     FaultReportStatus,
     FaultSeverity,
@@ -53,6 +54,7 @@ __all__ = [
     "MaintenanceWindow",
     "FavouriteStation",
     "StationReview",
+    "SavedPaymentMethod",
     "FaultReportStatus",
     "FaultSeverity",
     "FaultType",

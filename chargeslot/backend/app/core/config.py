@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     PAYMENT_WEBHOOK_SECRET: str = ""
     DATABASE_URL: str = "sqlite:///./chargeslot.db"
     ROUTING_SERVICE_URL: str = "http://localhost:5000"
+    RAZORPAY_KEY_ID: str | None = None
+    RAZORPAY_KEY_SECRET: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
