@@ -17,6 +17,11 @@ from app.booking.session_control import (
     record_session_stop_command_result,
     record_session_stop_transaction,
 )
+from app.booking.session_start import (
+    get_pending_session_start_commands,
+    record_session_start_command_result,
+    record_session_start_transaction,
+)
 from app.models.user import User, UserRole
 from app.schemas.gateway import (
     ConnectorStatusHistoryResponse,
@@ -31,6 +36,11 @@ from app.schemas.session import (
     SessionStopCommandResponse,
     SessionStopTransactionRequest,
     SessionStopTransactionResponse,
+    GatewaySessionStartResultRequest,
+    PendingSessionStartCommandsResponse,
+    SessionStartCommandResponse,
+    SessionStartTransactionRequest,
+    SessionStartTransactionResponse,
 )
 
 gateway_ocpp_router = APIRouter(tags=["Gateway Telemetry"])
@@ -186,6 +196,64 @@ def ingest_ocpp_stop_transaction(
 ) -> SessionStopTransactionResponse:
     """Complete a booking only after the gateway reports StopTransaction."""
     return record_session_stop_transaction(
+        db=db,
+        payload=payload,
+        actor_user=actor_user,
+    )
+
+
+@gateway_ocpp_router.get(
+    "/ocpp/1.6j/start-commands",
+    response_model=PendingSessionStartCommandsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Poll pending OCPP session start commands",
+)
+def poll_ocpp_session_start_commands(
+    gateway_id: str = Query(..., min_length=1, max_length=100),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    actor_user: User | None = Depends(authenticate_gateway_or_staff),
+) -> PendingSessionStartCommandsResponse:
+    return get_pending_session_start_commands(
+        db=db,
+        gateway_id=gateway_id,
+        actor_user=actor_user,
+        limit=limit,
+    )
+
+
+@gateway_ocpp_router.post(
+    "/ocpp/1.6j/start-commands/{command_id}/result",
+    response_model=SessionStartCommandResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Record an OCPP session start command result",
+)
+def report_ocpp_session_start_command_result(
+    command_id: int,
+    payload: GatewaySessionStartResultRequest,
+    db: Session = Depends(get_db),
+    actor_user: User | None = Depends(authenticate_gateway_or_staff),
+) -> SessionStartCommandResponse:
+    return record_session_start_command_result(
+        db=db,
+        command_id=command_id,
+        payload=payload,
+        actor_user=actor_user,
+    )
+
+
+@gateway_ocpp_router.post(
+    "/ocpp/1.6j/start-transaction",
+    response_model=SessionStartTransactionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Confirm an OCPP charging session has started",
+)
+def ingest_ocpp_start_transaction(
+    payload: SessionStartTransactionRequest,
+    db: Session = Depends(get_db),
+    actor_user: User | None = Depends(authenticate_gateway_or_staff),
+) -> SessionStartTransactionResponse:
+    return record_session_start_transaction(
         db=db,
         payload=payload,
         actor_user=actor_user,

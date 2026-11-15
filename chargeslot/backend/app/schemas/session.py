@@ -74,3 +74,68 @@ class SessionStopTransactionResponse(BaseModel):
     meter_stop_wh: int
     applied: bool = True
     idempotent_replay: bool = False
+
+
+class SessionStartCommandResponse(BaseModel):
+    command_id: int
+    booking_id: int
+    connector_id: int
+    status: str
+    message: str
+    retry_available: bool = False
+    alternative_connector_ids: list[int] = Field(default_factory=list)
+
+
+class PendingSessionStartCommand(BaseModel):
+    command_id: int
+    booking_id: int
+    connector_id: int
+    id_tag: str
+    action: Literal["RemoteStartTransaction"] = "RemoteStartTransaction"
+    requested_at: datetime
+
+
+class PendingSessionStartCommandsResponse(BaseModel):
+    gateway_id: str
+    commands: list[PendingSessionStartCommand] = Field(default_factory=list)
+
+
+class GatewaySessionStartResultRequest(BaseModel):
+    gateway_id: str = Field(
+        validation_alias=AliasChoices("gateway_id", "chargePointId"),
+        min_length=1,
+        max_length=100,
+    )
+    result: Literal["Accepted", "Rejected"]
+    error_code: str | None = Field(default=None, max_length=120)
+
+
+class SessionStartTransactionRequest(BaseModel):
+    gateway_id: str = Field(
+        validation_alias=AliasChoices("gateway_id", "chargePointId"),
+        min_length=1,
+        max_length=100,
+    )
+    command_id: int = Field(..., gt=0)
+    transaction_id: int = Field(
+        validation_alias=AliasChoices("transaction_id", "transactionId"),
+        ge=0,
+    )
+    observed_at: datetime = Field(
+        validation_alias=AliasChoices("observed_at", "timestamp")
+    )
+    idempotency_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("idempotency_key", "messageId", "message_id"),
+        max_length=120,
+    )
+
+
+class SessionStartTransactionResponse(BaseModel):
+    booking_id: int
+    command_id: int
+    transaction_id: int
+    status: str
+    started_at: datetime
+    applied: bool = True
+    idempotent_replay: bool = False
