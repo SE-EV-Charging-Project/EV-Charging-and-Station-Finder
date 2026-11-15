@@ -139,9 +139,18 @@ The vehicle must belong to the authenticated driver and have a saved battery lev
 - **Choose:** `POST /api/v1/bookings/manual-slot`
 - **Auth:** Bearer Token (Driver or Admin)
 
-Recommendations include approved active stations and operational compatible chargers, honor operating hours, maintenance windows, and existing active bookings, and rank slots by earliest start, then configured tariff (missing tariffs last), then slot duration. Results are limited to 50 by default; `limit` can be set from 1 to 200, and `station_id` can restrict the search. A connector marked occupied now may still be recommended for a future slot; reserved, faulted, and offline connectors are excluded.
+Recommendations include approved active stations and operational compatible chargers, honor operating hours, maintenance windows, and existing active bookings, and rank slots by an equally weighted normalized score for slot start time, estimated cost, and charging duration. Each item reports the factors used, the reasons it ranked as shown, and unavailable factors. Results are limited to 50 by default; `limit` can be set from 1 to 200, and `station_id` can restrict the search. A connector marked occupied now may still be recommended for a future slot; reserved, faulted, and offline connectors are excluded.
 
 The manual booking request must identify the station, charger, owned vehicle, start time, and target SoC. The service rechecks connector compatibility and availability before creating a five-minute `Held` booking and returns the reservation fee; unique database claims for each 15-minute charger and vehicle interval prevent concurrent requests from booking the same charger slot or overlapping the same vehicle. Overlapping, blocked, or out-of-hours choices return `409 Conflict`.
+
+### Auto-Book (REQ-F3-16 through REQ-F3-21 / CS19-070–075)
+- **Method:** `POST`
+- **Path:** `/api/v1/bookings/auto-book`
+- **Auth:** Bearer Token (Driver or Admin)
+
+Provide the vehicle, current coordinates, target date, and optional target SoC. Stations must pass road-distance reachability before their slots are considered. `confirm_first` (default) returns the highest-scoring reachable suggestion without reserving it; `book_immediately` creates a five-minute `Held` payment hold. Either way, final confirmation still requires the reservation fee. The equal-weight normalized score uses slot start time, estimated cost, and charging time. Detour and reliability are explicitly returned as unavailable because the system does not have those signals; no values are fabricated. If no slot is available on the requested date, the response includes up to three reachable alternatives within the seven-day horizon.
+
+Battery input responses set `auto_booking_suggested` when the saved SoC is at or below the driver's threshold (20% by default) and direct the client to provide location to request a reachable auto-booking suggestion.
 
 ### Vehicle-Compatible Station Filtering (REQ-F3-05 / CS19-059)
 - **Method:** `GET`

@@ -415,8 +415,14 @@ def enter_battery_level(
         energy_required_kwh=energy_req,
         is_low_battery=is_low,
         low_battery_threshold=low_threshold,
+        auto_booking_suggested=is_low,
         battery_updated_at=vehicle.battery_updated_at,
-        message="Vehicle battery level updated successfully.",
+        message=(
+            "Battery level is at or below the low-battery threshold. Provide your "
+            "location to get a reachable auto-booking suggestion."
+            if is_low
+            else "Vehicle battery level updated successfully."
+        ),
     )
 
 
@@ -465,6 +471,12 @@ def get_vehicle_battery(
         energy_required_kwh=energy_req,
         is_low_battery=current_soc <= low_threshold,
         low_battery_threshold=low_threshold,
+        auto_booking_suggested=current_soc <= low_threshold,
         battery_updated_at=vehicle.battery_updated_at,
-        message="Current vehicle battery level retrieved successfully.",
+        message=(
+            "Battery level is at or below the low-battery threshold. Provide your "
+            "location to get a reachable auto-booking suggestion."
+            if current_soc <= low_threshold
+            else "Current vehicle battery level retrieved successfully."
+        ),
     )

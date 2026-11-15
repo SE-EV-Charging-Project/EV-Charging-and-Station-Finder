@@ -558,7 +558,7 @@ def test_tc_f3_09_cost_estimate_uses_station_tariff_and_checks_ownership(
     assert missing_tariff_response.status_code == 409
 
 
-def test_tc_f3_10_recommended_slots_rank_by_start_then_tariff_and_duration(
+def test_tc_f3_10_recommended_slots_rank_by_normalized_weighted_score(
     client: TestClient,
     db_session: Session,
     driver_alice: User,
@@ -632,23 +632,11 @@ def test_tc_f3_10_recommended_slots_rank_by_start_then_tariff_and_duration(
     data = response.json()
     assert data["total"] > len(data["items"])
     assert [item["rank"] for item in data["items"]] == [1, 2, 3, 4]
-    first_start = datetime.fromisoformat(
-        data["items"][0]["start_time"].replace("Z", "+00:00")
-    )
-    second_start = datetime.fromisoformat(
-        data["items"][1]["start_time"].replace("Z", "+00:00")
-    )
-    assert first_start == second_start
-    assert data["items"][0]["station_id"] == cheaper_station.id
-    assert data["items"][0]["charger_id"] == cheaper_charger.id
-    assert data["items"][1]["charger_id"] == slower_charger.id
-    assert data["items"][0]["price_per_kwh"] <= data["items"][1]["price_per_kwh"]
-    assert data["items"][0]["price_per_kwh"] == 5.0
-    assert data["items"][1]["price_per_kwh"] == 5.0
-    assert data["items"][0]["slot_length_minutes"] < data["items"][1]["slot_length_minutes"]
-    assert data["items"][0]["slot_length_minutes"] == 60
-    assert data["items"][0]["estimated_cost"] == 135.0
-    assert alice_station.id in {item["station_id"] for item in data["items"]}
+    scores = [item["score"] for item in data["items"]]
+    assert scores == sorted(scores, reverse=True)
+    assert all(item["selection_reasons"] for item in data["items"])
+    assert all("detour" in item["unavailable_factors"] for item in data["items"])
+    assert all("reliability" in item["unavailable_factors"] for item in data["items"])
 
 
 def test_tc_f3_11_manual_slot_booking_rejects_foreign_vehicle_and_overlaps(
@@ -1452,6 +1440,7 @@ def test_tc_f3_01_low_battery_trigger_flag(
     )
     assert r_low.status_code == 200
     assert r_low.json()["is_low_battery"] is True
+    assert r_low.json()["auto_booking_suggested"] is True
 
     # 20% <= 20% -> is_low_battery True
     r_exact = client.post(
@@ -1461,6 +1450,7 @@ def test_tc_f3_01_low_battery_trigger_flag(
     )
     assert r_exact.status_code == 200
     assert r_exact.json()["is_low_battery"] is True
+    assert r_exact.json()["auto_booking_suggested"] is True
 
     # 21% > 20% -> is_low_battery False
     r_above = client.post(
@@ -1470,6 +1460,7 @@ def test_tc_f3_01_low_battery_trigger_flag(
     )
     assert r_above.status_code == 200
     assert r_above.json()["is_low_battery"] is False
+    assert r_above.json()["auto_booking_suggested"] is False
 
 
 def test_tc_f3_01_boundary_partitions(

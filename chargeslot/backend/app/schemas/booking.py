@@ -3,7 +3,7 @@ Booking Schemas (Feature 3: Battery-Aware Booking and Auto-Booking / CS19-055 / 
 """
 
 import math
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from typing import Any
 
@@ -91,6 +91,7 @@ class BatteryLevelResponse(BaseModel):
     energy_required_kwh: float
     is_low_battery: bool
     low_battery_threshold: int
+    auto_booking_suggested: bool = False
     battery_updated_at: datetime | None = None
     message: str
 
@@ -179,6 +180,10 @@ class RecommendedSlotItem(BaseModel):
     slot_length_minutes: int
     price_per_kwh: float | None
     estimated_cost: float | None
+    score: float | None = None
+    available_factors: list[str] = Field(default_factory=list)
+    unavailable_factors: list[str] = Field(default_factory=list)
+    selection_reasons: list[str] = Field(default_factory=list)
 
 
 class RecommendedSlotsResponse(BaseModel):
@@ -186,6 +191,31 @@ class RecommendedSlotsResponse(BaseModel):
 
     total: int
     items: list[RecommendedSlotItem]
+
+
+class AutoBookRequest(BaseModel):
+    """Request an auto-booking suggestion or a temporary hold for a reachable slot."""
+
+    vehicle_id: int = Field(..., gt=0)
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    slot_date: date
+    target_soc: int = Field(default=80, ge=0, le=100, strict=True)
+    confirmation_mode: Literal["confirm_first", "book_immediately"] = "confirm_first"
+
+
+class AutoBookResponse(BaseModel):
+    """Best reachable slot, resulting hold if requested, or actionable alternatives."""
+
+    status: Literal["suggested", "held", "no_slot", "configuration_required"]
+    selected_slot: RecommendedSlotItem | None = None
+    booking_id: int | None = None
+    booking_status: str | None = None
+    reservation_fee_amount: float | None = None
+    hold_expires_at: datetime | None = None
+    alternatives: list[RecommendedSlotItem] = Field(default_factory=list)
+    unavailable_factors: list[str] = Field(default_factory=list)
+    message: str
 
 
 class ManualSlotBookingRequest(BaseModel):
