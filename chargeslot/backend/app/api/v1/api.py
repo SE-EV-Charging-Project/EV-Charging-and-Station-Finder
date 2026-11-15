@@ -13,6 +13,9 @@ from app.api.v1.endpoints import (
     bookings,
     navigation,
     payments,
+    billing,
+    tariffs,
+    analytics,
 )
 
 api_router = APIRouter()
@@ -29,5 +32,6 @@ api_router.include_router(gateway.router)
 api_router.include_router(bookings.router)
 api_router.include_router(navigation.router)
 api_router.include_router(payments.router)
-
-
+api_router.include_router(billing.router)
+api_router.include_router(tariffs.router)
+api_router.include_router(analytics.router)

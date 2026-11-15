@@ -214,6 +214,7 @@ class ManualSlotBookingResponse(BaseModel):
     start_time: datetime
     end_time: datetime
     status: str
+    hold_expires_at: datetime | None = None
 
 
 class SlotHoldResponse(BaseModel):
@@ -281,3 +282,5 @@ class BookingCancellationResponse(BaseModel):
     currency: str = "INR"
     is_late_cancellation: bool
     message: str
+    refund_status: str | None = None
+    refund_due_at: datetime | None = None

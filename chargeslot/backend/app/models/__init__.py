@@ -12,6 +12,9 @@ from app.models.maintenance import MaintenanceWindow
 from app.models.favourite import FavouriteStation
 from app.models.review import StationReview
 from app.models.saved_payment_method import SavedPaymentMethod
+from app.models.payment_record import PaymentRecord, PaymentReconciliation
+from app.models.analytics_snapshot import AnalyticsSnapshot
+from app.models.station_tariff import StationTariff
 from app.models.fault_report import (
     FaultReportStatus,
     FaultSeverity,
@@ -55,6 +58,10 @@ __all__ = [
     "FavouriteStation",
     "StationReview",
     "SavedPaymentMethod",
+    "PaymentRecord",
+    "PaymentReconciliation",
+    "AnalyticsSnapshot",
+    "StationTariff",
     "FaultReportStatus",
     "FaultSeverity",
     "FaultType",

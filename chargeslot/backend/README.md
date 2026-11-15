@@ -141,7 +141,7 @@ The vehicle must belong to the authenticated driver and have a saved battery lev
 
 Recommendations include approved active stations and operational compatible chargers, honor operating hours, maintenance windows, and existing active bookings, and rank slots by earliest start, then configured tariff (missing tariffs last), then slot duration. Results are limited to 50 by default; `limit` can be set from 1 to 200, and `station_id` can restrict the search. A connector marked occupied now may still be recommended for a future slot; reserved, faulted, and offline connectors are excluded.
 
-The manual booking request must identify the station, charger, owned vehicle, start time, and target SoC. The service rechecks connector compatibility and availability before creating a five-minute `Held` booking and returns the reservation fee; unique database claims for each 15-minute charger and vehicle interval prevent concurrent requests from booking the same charger slot or overlapping the same vehicle. Overlapping, blocked, or out-of-hours choices return `409 Conflict`.
+The manual booking request must identify the station, charger, owned vehicle, start time, and target SoC. The service rechecks connector compatibility and availability before creating a five-minute `Held` booking; it becomes `Confirmed` only after the reservation-fee order is verified. Unique database claims for each 15-minute charger and vehicle interval prevent concurrent requests from booking the same charger slot or overlapping the same vehicle. Overlapping, blocked, or out-of-hours choices return `409 Conflict`.
 
 ### Vehicle-Compatible Station Filtering (REQ-F3-05 / CS19-059)
 - **Method:** `GET`
@@ -193,7 +193,7 @@ The request contains a compatible `charger_id` and a new `start_time`. Only conf
 - **Path:** `/api/v1/bookings/{booking_id}/cancel`
 - **Auth:** Bearer Token (booking owner or Admin)
 
-Held and confirmed bookings can be cancelled before they start. Confirmed bookings cancelled at least 30 minutes before start incur no fee; later cancellations record a fee equal to 10% of estimated charging cost, rounded to INR paise. A station tariff and stored energy estimate are required to calculate a late fee. The response records the amount due; collection is left to the payment integration.
+Held and confirmed bookings can be cancelled before they start. Confirmed bookings cancelled at least 30 minutes before start incur no fee; later cancellations record a fee equal to 10% of estimated charging cost, rounded to INR paise. Captured reservation fees and session payments are automatically refunded less any cancellation fee. Refunds are submitted to the gateway with an idempotency key and tracked against a five-weekday deadline; a gateway failure is returned explicitly and can be retried through the refund endpoint.
 
 ## Running Tests
 
@@ -225,3 +225,40 @@ The booking owner or an Admin can request a stop with `POST /api/v1/bookings/{bo
 Authenticated gateways poll `GET /api/v1/gateway/ocpp/1.6j/commands?gateway_id=GW-ID` with `X-Gateway-Secret` or an Operator/Admin bearer token. Pending commands remain available until a result is reported to `POST /api/v1/gateway/ocpp/1.6j/commands/{command_id}/result` as `Accepted` or `Rejected`. When measured energy since the first session meter sample reaches `booking.est_energy_kwh`, meter ingestion queues the same stop command automatically. If no transaction ID is available, the meter response reports that the target was reached but no command could be queued.
 
 Only a gateway `StopTransaction` confirmation sent to `POST /api/v1/gateway/ocpp/1.6j/stop-transaction` marks the booking `Completed`. Submit `gateway_id`, `transaction_id`, `meter_stop_wh`, and `observed_at`; an optional `idempotency_key` (or OCPP `messageId`) makes retries safe. The gateway is responsible for translating the queued command into OCPP and reporting the protocol result and final transaction event.
+
+## Payments, Billing, Tariffs, and Analytics (CS19-088–113)
+
+Payment methods are UPI, debit/credit card, and net banking through Razorpay. Configure `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`; set `RAZORPAY_WEBHOOK_SECRET` for signed webhook processing. The reservation fee defaults to INR 50 and can be changed with `RESERVATION_FEE_INR`. New tariffs default to no idle fee and zero tax until the operator configures them. Amounts sent to Razorpay and stored in the ledger are integer paise.
+
+### Booking and session payment flow
+
+1. `POST /api/v1/bookings/manual-slot` or `/api/v1/bookings/hold-slot` creates a five-minute `Held` booking.
+2. Create the reservation order with `POST /api/v1/payments/bookings/{booking_id}/reservation/order`:
+   ```json
+   {"payment_method": "upi", "idempotency_key": "reservation-<unique-client-key>"}
+   ```
+3. Verify the gateway result at `POST /api/v1/payments/verify`. The server validates the Razorpay signature and fetches both order and payment from Razorpay before confirming the booking and snapshotting the effective tariff.
+4. On OCPP `StopTransaction`, the system computes the final bill from metered energy, idle time after the slot, the tariff snapshot, and tax, less the captured reservation fee. Any unpaid balance sets `payment_due` and blocks new bookings.
+5. Create a balance order with `POST /api/v1/payments/bookings/{booking_id}/balance/order`, then verify it in the same way. A signed `payment.failed` webhook preserves `Payment Due`.
+
+All order and refund requests carry an idempotency key. Clients should supply the same key when retrying a request; the returned order is reused instead of creating another charge. The payment ledger records order/payment references, type, status, amount, and timestamps.
+
+### Refunds, invoices, and history
+
+Cancellation automatically requests refunds for captured booking payments, deducting the recorded cancellation fee. `POST /api/v1/payments/bookings/{booking_id}/refund` is available for a retry with a new idempotency key. Refund status and due date are returned, and signed gateway refund webhooks update the ledger.
+
+Drivers can view their date-sorted payment ledger at `GET /api/v1/payments/history`. A completed session's paid invoice is available as a PDF at `GET /api/v1/billing/bookings/{booking_id}/invoice`; only the booking owner or an administrator can access it.
+
+### Operator tariffs
+
+Operators can read and version their own station tariff at `GET` and `PUT /api/v1/stations/{station_id}/tariff`; administrators can manage any station. A tariff contains INR/kWh, idle INR/minute, tax percentage, and peak periods. Peak period times are UTC `HH:MM` values with a positive multiplier. Tariff changes are effective immediately; clients cannot supply an effective date. Each confirmed booking retains the price, idle fee, tax, and peak-period snapshot that was in force at confirmation.
+
+### Reconciliation
+
+Administrators can run or rerun a daily payment/refund comparison with `POST /api/v1/payments/reconciliation/daily?reconciled_on=YYYY-MM-DD`; the default is the previous UTC day. The run and any missing or mismatched gateway references are persisted. For unattended daily execution, schedule `python -m app.daily_reconciliation` from `chargeslot/backend` once per day. This command uses the configured database and an existing administrator account.
+
+### Usage, earnings, and platform analytics
+
+Authenticated users can read their role-scoped analytics at `GET /api/v1/analytics/summary?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD&granularity=week`; `granularity` also accepts `month`, and the default date range is the previous 30 UTC days. Drivers receive their session count, energy, net captured spend, estimated CO₂ savings, weekly/monthly trends, and most-used stations. Operators receive the same station-level sessions, energy, net revenue, and utilization metrics only for stations they own. Administrators receive platform session, energy, revenue, user, and station totals. The CSV export at `GET /api/v1/analytics/export.csv` uses the same date and role scope.
+
+CO₂ savings are estimates using `CO2_SAVED_KG_PER_KWH` (default 0.7 kg per delivered kWh); deployments should configure a factor appropriate to their chosen comparison methodology. Analytics are stored in a shared snapshot that refreshes on first use and whenever it is at least one hour old. To refresh even when no analytics requests are made, schedule `python -m app.refresh_analytics` from `chargeslot/backend` at least hourly.

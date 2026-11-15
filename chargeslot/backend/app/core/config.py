@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -18,6 +19,9 @@ class Settings(BaseSettings):
     ROUTING_SERVICE_URL: str = "http://localhost:5000"
     RAZORPAY_KEY_ID: str | None = None
     RAZORPAY_KEY_SECRET: str | None = None
+    RAZORPAY_WEBHOOK_SECRET: str | None = None
+    RESERVATION_FEE_INR: float = Field(default=50.0, gt=0, le=100_000)
+    CO2_SAVED_KG_PER_KWH: float = Field(default=0.7, gt=0, le=10)
 
     model_config = SettingsConfigDict(
         env_file=".env",

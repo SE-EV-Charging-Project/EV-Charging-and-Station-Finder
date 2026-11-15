@@ -1,19 +1,29 @@
-from fastapi import APIRouter, Depends, Response, status
+from datetime import date
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_admin
 from app.db.session import get_db
+from app.models.booking import Booking, BookingStatus
+from app.models.payment_record import PaymentRecord
 from app.models.user import User
 from app.schemas.payment import (
+    BookingPaymentOrderRequest,
     PaymentMethod,
+    PaymentHistoryItem,
     PaymentOrderRequest,
     PaymentOrderResponse,
+    RefundRequest,
+    RefundResponse,
     PaymentVerificationRequest,
     PaymentVerificationResponse,
     SavedPaymentMethodCreate,
     SavedPaymentMethodResponse,
 )
+from app.schemas.billing import ReconciliationResponse
 from app.services.payment_service import PaymentService
+from app.services.reconciliation_service import reconcile_daily
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
@@ -45,8 +55,131 @@ def create_payment_order(
 def verify_payment(
     payload: PaymentVerificationRequest,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    return PaymentService.verify_payment(data=payload, user=current_user)
+    return PaymentService.verify_payment(data=payload, user=current_user, db=db)
+
+
+@router.post(
+    "/bookings/{booking_id}/reservation/order",
+    response_model=PaymentOrderResponse,
+)
+def create_reservation_fee_order(
+    booking_id: int,
+    payload: BookingPaymentOrderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PaymentOrderResponse:
+    return PaymentService.create_booking_order(
+        db, current_user, booking_id, payload, payment_type="reservation"
+    )
+
+
+@router.post(
+    "/bookings/{booking_id}/balance/order",
+    response_model=PaymentOrderResponse,
+)
+def create_balance_order(
+    booking_id: int,
+    payload: BookingPaymentOrderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PaymentOrderResponse:
+    return PaymentService.create_booking_order(
+        db, current_user, booking_id, payload, payment_type="balance"
+    )
+
+
+@router.post(
+    "/bookings/{booking_id}/refund",
+    response_model=RefundResponse,
+)
+def refund_booking(
+    booking_id: int,
+    payload: RefundRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RefundResponse:
+    return PaymentService.refund_booking(
+        db, current_user, booking_id, payload.idempotency_key
+    )
+
+
+@router.get("/history", response_model=list[PaymentHistoryItem])
+def payment_history(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[PaymentHistoryItem]:
+    PaymentService._require_driver(current_user)
+    records = (
+        db.query(PaymentRecord)
+        .filter(PaymentRecord.user_id == current_user.id)
+        .order_by(PaymentRecord.created_at.desc(), PaymentRecord.id.desc())
+        .all()
+    )
+    bookings = {
+        booking.id: booking
+        for booking in db.query(Booking)
+        .filter(
+            Booking.id.in_(
+                [record.booking_id for record in records if record.booking_id is not None]
+                or [-1]
+            )
+        )
+        .all()
+    }
+    return [
+        PaymentHistoryItem(
+            id=record.id,
+            booking_id=record.booking_id,
+            amount_paise=record.amount_paise,
+            currency=record.currency,
+            payment_type=record.payment_type,
+            gateway_reference=record.gateway_reference,
+            gateway_payment_id=record.gateway_payment_id,
+            status=record.status,
+            created_at=record.created_at,
+            invoice_url=(
+                f"/api/v1/billing/bookings/{record.booking_id}/invoice"
+                if record.booking_id in bookings
+                and bookings[record.booking_id].status == BookingStatus.COMPLETED
+                and not bookings[record.booking_id].payment_due
+                and record.status == "captured"
+                else None
+            ),
+        )
+        for record in records
+    ]
+
+
+@router.post("/webhook", status_code=status.HTTP_200_OK)
+async def payment_webhook(
+    request: Request,
+    x_razorpay_signature: str | None = Header(default=None, alias="X-Razorpay-Signature"),
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    if request.url.scheme.lower() != "https":
+        raise HTTPException(
+            status_code=400,
+            detail="Payment webhooks must be received over HTTPS.",
+        )
+    return PaymentService.process_webhook(
+        db,
+        await request.body(),
+        x_razorpay_signature,
+    )
+
+
+@router.post(
+    "/reconciliation/daily",
+    response_model=ReconciliationResponse,
+)
+def run_daily_reconciliation(
+    reconciled_on: date | None = None,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> ReconciliationResponse:
+    return reconcile_daily(db, current_user, reconciled_on)
 
 
 @router.post(

@@ -4,9 +4,11 @@ from sqlalchemy import (
     String,
     Integer,
     Float,
+    Boolean,
     DateTime,
     ForeignKey,
     Enum,
+    JSON,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -78,14 +80,22 @@ class Booking(Base):
         default=0.0,
         nullable=False,
     )
-    reservation_fee_amount: Mapped[float] = mapped_column(
-        Float,
-        default=0.0,
-        nullable=False,
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tariff_snapshot_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("station_tariffs.id", ondelete="SET NULL"), nullable=True
     )
-    confirmed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    tariff_price_per_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    tariff_idle_fee_per_minute: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    tariff_tax_rate_percent: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    tariff_peak_periods: Mapped[list[dict]] = mapped_column(JSON, default=list, nullable=False)
+    reservation_fee_amount: Mapped[float] = mapped_column(Float, default=50.0, nullable=False)
+    reservation_fee_paid_amount: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    energy_delivered_kwh: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    energy_cost_amount: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    idle_fee_amount: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    tax_amount: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    final_bill_amount: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    payment_due: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     session_ended_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -110,4 +120,5 @@ class Booking(Base):
     user = relationship("User", back_populates="bookings")
     vehicle = relationship("Vehicle", back_populates="bookings")
     connector = relationship("Connector", foreign_keys=[connector_id])
+    tariff_snapshot = relationship("StationTariff")
     review = relationship("StationReview", back_populates="booking", uselist=False, cascade="all, delete-orphan")

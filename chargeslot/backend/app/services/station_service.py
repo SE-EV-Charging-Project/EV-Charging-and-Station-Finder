@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
@@ -5,6 +7,7 @@ from sqlalchemy import or_
 from app.core.permissions import enforce_operator_scope, scope_operator_query
 from app.models.user import User, UserRole
 from app.models.station import Station, StationStatus
+from app.models.station_tariff import StationTariff
 from app.schemas.station import (
     StationCreateRequest,
     StationUpdateRequest,
@@ -62,6 +65,19 @@ class StationService:
             is_active=True,
         )
         db.add(station)
+        db.flush()
+        if data.price_per_kwh is not None:
+            db.add(
+                StationTariff(
+                    station_id=station.id,
+                    created_by_user_id=user.id,
+                    price_per_kwh=data.price_per_kwh,
+                    idle_fee_per_minute=0.0,
+                    tax_rate_percent=0.0,
+                    peak_periods=[],
+                    effective_from=datetime.now(timezone.utc),
+                )
+            )
         db.commit()
         db.refresh(station)
 
@@ -192,6 +208,40 @@ class StationService:
         enforce_station_values(update_dict, partial=True)
 
         content_changed = False
+        tariff_price = update_dict.get("price_per_kwh")
+        if tariff_price is not None:
+            now = datetime.now(timezone.utc)
+            current_tariff = (
+                db.query(StationTariff)
+                .filter(
+                    StationTariff.station_id == station.id,
+                    StationTariff.effective_from <= now,
+                )
+                .order_by(
+                    StationTariff.effective_from.desc(),
+                    StationTariff.id.desc(),
+                )
+                .first()
+            )
+            db.add(
+                StationTariff(
+                    station_id=station.id,
+                    created_by_user_id=user.id,
+                    price_per_kwh=tariff_price,
+                    idle_fee_per_minute=(
+                        current_tariff.idle_fee_per_minute if current_tariff else 0.0
+                    ),
+                    tax_rate_percent=(
+                        current_tariff.tax_rate_percent if current_tariff else 0.0
+                    ),
+                    peak_periods=(
+                        list(current_tariff.peak_periods or [])
+                        if current_tariff
+                        else []
+                    ),
+                    effective_from=now,
+                )
+            )
         for field, value in update_dict.items():
             if field == "is_active":
                 station.is_active = value
@@ -347,4 +397,3 @@ class StationService:
         return StationModerationService.process_gate_action(
             db=db, admin=admin, station_id=station_id, action=action, reason=reason, ip_address=ip_address
         )
-

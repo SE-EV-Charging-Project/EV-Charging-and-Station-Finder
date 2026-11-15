@@ -16,8 +16,8 @@ from app.booking.battery import (
     get_target_vehicle,
 )
 from app.booking.validators import validate_battery_level_input
-from app.booking.payments import calculate_reservation_fee
 from app.booking.state import transition_booking_status
+from app.core.config import settings
 from app.models.booking import Booking, BookingStatus
 from app.models.booking_slot_claim import BookingSlotClaim
 from app.models.charger import Charger, Connector, ConnectorStatus, CurrentType
@@ -25,6 +25,7 @@ from app.models.maintenance import MaintenanceWindow
 from app.models.station import Station, StationStatus
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
+from app.services.billing_service import ensure_no_payment_due
 from app.schemas.booking import (
     ManualSlotBookingResponse,
     BookingModificationResponse,
@@ -466,6 +467,7 @@ def _create_slot_booking(
     target_soc: int = 80,
     ip_address: str | None = None,
 ) -> tuple[Booking, float, int, float]:
+    ensure_no_payment_due(db, user)
     _release_stale_slot_claims(db, datetime.now(timezone.utc))
     vehicle, validated_target = _validate_estimate_inputs(
         db=db,
@@ -540,10 +542,7 @@ def _create_slot_booking(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A station tariff is required to calculate the reservation fee.",
             )
-        reservation_fee_amount = calculate_reservation_fee(
-            energy_required_kwh,
-            station.price_per_kwh,
-        )
+        reservation_fee_amount = settings.RESERVATION_FEE_INR
     normalized_start = ensure_utc(start_time)
     candidates = _candidate_slots(
         db=db,
@@ -651,6 +650,11 @@ def create_manual_slot_booking(
         start_time=ensure_utc(booking.start_time),
         end_time=ensure_utc(booking.end_time),
         status=booking.status.value,
+        hold_expires_at=(
+            ensure_utc(booking.hold_expires_at)
+            if booking.hold_expires_at is not None
+            else None
+        ),
     )
 
 
@@ -849,9 +853,14 @@ def cancel_booking(
             if booking.station_id is not None
             else None
         )
+        cancellation_rate = (
+            booking.tariff_price_per_kwh
+            if booking.tariff_price_per_kwh is not None
+            else station.price_per_kwh if station is not None else None
+        )
         if (
             station is None
-            or station.price_per_kwh is None
+            or cancellation_rate is None
             or booking.est_energy_kwh is None
         ):
             raise HTTPException(
@@ -863,7 +872,7 @@ def cancel_booking(
             )
         estimated_cost = compute_charging_cost(
             booking.est_energy_kwh,
-            station.price_per_kwh,
+            cancellation_rate,
         )
         fee_amount = round(estimated_cost * 0.10, 2)
 

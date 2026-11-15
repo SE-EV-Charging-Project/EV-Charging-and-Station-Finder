@@ -72,3 +72,9 @@ class Station(Base):
     maintenance_windows = relationship("MaintenanceWindow", back_populates="station", cascade="all, delete-orphan")
     favourited_by = relationship("FavouriteStation", back_populates="station", cascade="all, delete-orphan")
     reviews = relationship("StationReview", back_populates="station", cascade="all, delete-orphan")
+    tariffs = relationship(
+        "StationTariff",
+        back_populates="station",
+        cascade="all, delete-orphan",
+        order_by="StationTariff.effective_from",
+    )
