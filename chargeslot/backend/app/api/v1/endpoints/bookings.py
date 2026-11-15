@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.booking.payments import record_payment_confirmation
 from app.booking.session_control import request_session_stop
+from app.booking.checkin import check_in_booking
+from app.booking.session_start import request_session_start
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
@@ -34,8 +36,54 @@ from app.schemas.booking import (
 )
 from app.services.booking_service import BookingService
 from app.schemas.session import SessionStopCommandResponse
+from app.schemas.booking import (
+    BookingCheckinRequest,
+    BookingCheckinResponse,
+    RemoteStartRequest,
+)
+from app.schemas.session import SessionStartCommandResponse
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
+
+
+@router.post(
+    "/{booking_id}/check-in",
+    response_model=BookingCheckinResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Check in to a confirmed booking",
+)
+def post_booking_checkin(
+    booking_id: int = Path(..., gt=0),
+    payload: BookingCheckinRequest = ...,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> BookingCheckinResponse:
+    return check_in_booking(
+        db=db,
+        user=current_user,
+        booking_id=booking_id,
+        payload=payload,
+    )
+
+
+@router.post(
+    "/{booking_id}/start-session",
+    response_model=SessionStartCommandResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Request remote start for a checked-in booking",
+)
+def post_booking_session_start(
+    booking_id: int = Path(..., gt=0),
+    payload: RemoteStartRequest = ...,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SessionStartCommandResponse:
+    return request_session_start(
+        db=db,
+        booking_id=booking_id,
+        user=current_user,
+        connector_id=payload.connector_id,
+    )
 
 
 @router.post(

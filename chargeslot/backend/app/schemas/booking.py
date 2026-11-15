@@ -7,7 +7,7 @@ from datetime import date, datetime
 from typing import Literal
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class BatteryLevelInputRequest(BaseModel):
@@ -216,6 +216,37 @@ class AutoBookResponse(BaseModel):
     alternatives: list[RecommendedSlotItem] = Field(default_factory=list)
     unavailable_factors: list[str] = Field(default_factory=list)
     message: str
+
+
+class BookingCheckinRequest(BaseModel):
+    """Prove arrival with the signed booking QR or paired coordinates."""
+
+    qr_code_payload: str | None = Field(default=None, min_length=1, max_length=500)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+
+    @model_validator(mode="after")
+    def require_one_checkin_method(self):
+        has_qr = self.qr_code_payload is not None
+        has_coordinates = self.latitude is not None and self.longitude is not None
+        partial_coordinates = (self.latitude is None) != (self.longitude is None)
+        if partial_coordinates or has_qr == has_coordinates:
+            raise ValueError(
+                "Provide either a QR code payload or both latitude and longitude."
+            )
+        return self
+
+
+class BookingCheckinResponse(BaseModel):
+    booking_id: int
+    checked_in_at: datetime
+    message: str
+
+
+class RemoteStartRequest(BaseModel):
+    """Request session start on the assigned connector or a compatible alternative."""
+
+    connector_id: int | None = Field(default=None, gt=0)
 
 
 class ManualSlotBookingRequest(BaseModel):

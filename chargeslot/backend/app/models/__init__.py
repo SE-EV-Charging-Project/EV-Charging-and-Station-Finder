@@ -24,6 +24,10 @@ from app.models.charging_session_command import (
     SessionStopCommandStatus,
     SessionStopCommandTrigger,
 )
+from app.models.charging_session_start_command import (
+    ChargingSessionStartCommand,
+    SessionStartCommandStatus,
+)
 from app.models.booking_payment_event import (
     BookingPaymentEvent,
     BookingPaymentEventStatus,
@@ -60,8 +64,10 @@ __all__ = [
     "ConnectorStatusEvent",
     "ChargingSessionReading",
     "ChargingSessionCommand",
+    "ChargingSessionStartCommand",
     "SessionStopCommandStatus",
     "SessionStopCommandTrigger",
+    "SessionStartCommandStatus",
     "BookingPaymentEvent",
     "BookingPaymentEventStatus",
 ]
