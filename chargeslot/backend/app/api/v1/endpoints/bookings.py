@@ -11,6 +11,8 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.booking import (
+    AutoBookRequest,
+    AutoBookResponse,
     BatteryLevelInputRequest,
     BatteryLevelResponse,
     BatteryRulesResponse,
@@ -187,6 +189,38 @@ def get_recommended_slots(
         target_soc=target_soc,
         station_id=station_id,
         limit=limit,
+    )
+
+
+@router.post(
+    "/auto-book",
+    response_model=AutoBookResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Suggest or hold the best reachable compatible slot",
+    description=(
+        "Ranks reachable slots using equally weighted normalized arrival-time, price, "
+        "and charging-time signals. Detour and reliability are reported unavailable "
+        "until the system has those data. confirm_first is the default; "
+        "book_immediately creates a five-minute payment hold, not a confirmed booking."
+    ),
+)
+def post_auto_book(
+    payload: AutoBookRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AutoBookResponse:
+    client_ip = request.client.host if request.client else None
+    return BookingService.auto_book(
+        db=db,
+        user=current_user,
+        vehicle_id=payload.vehicle_id,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        slot_date=payload.slot_date,
+        target_soc=payload.target_soc,
+        confirmation_mode=payload.confirmation_mode,
+        ip_address=client_ip,
     )
 
 

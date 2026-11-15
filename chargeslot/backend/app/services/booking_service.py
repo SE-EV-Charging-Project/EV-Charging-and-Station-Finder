@@ -19,6 +19,7 @@ from app.booking.battery import (
 )
 from app.booking.validators import get_battery_rules as domain_get_battery_rules
 from app.booking.slots import (
+    auto_book_slot as domain_auto_book_slot,
     create_manual_slot_booking as domain_create_manual_slot_booking,
     create_slot_hold as domain_create_slot_hold,
     modify_confirmed_booking as domain_modify_confirmed_booking,
@@ -27,6 +28,7 @@ from app.booking.slots import (
 )
 from app.models.user import User
 from app.schemas.booking import (
+    AutoBookResponse,
     BatteryLevelResponse,
     BookingCancellationResponse,
     BookingModificationResponse,
@@ -187,6 +189,31 @@ class BookingService:
             target_soc=target_soc,
             station_id=station_id,
             limit=limit,
+        )
+
+    @staticmethod
+    def auto_book(
+        db: Session,
+        user: User,
+        vehicle_id: int,
+        latitude: float,
+        longitude: float,
+        slot_date: date,
+        target_soc: int = 80,
+        confirmation_mode: str = "confirm_first",
+        ip_address: str | None = None,
+    ) -> AutoBookResponse:
+        """Suggest or temporarily hold the highest-scoring reachable slot."""
+        return domain_auto_book_slot(
+            db=db,
+            user=user,
+            vehicle_id=vehicle_id,
+            latitude=latitude,
+            longitude=longitude,
+            slot_date=slot_date,
+            target_soc=target_soc,
+            confirmation_mode=confirmation_mode,
+            ip_address=ip_address,
         )
 
     @staticmethod

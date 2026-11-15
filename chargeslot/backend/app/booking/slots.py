@@ -15,6 +15,7 @@ from app.booking.battery import (
     compute_slot_length_minutes,
     get_target_vehicle,
 )
+from app.discovery.reachability import find_reachable_stations
 from app.booking.validators import validate_battery_level_input
 from app.booking.payments import calculate_reservation_fee
 from app.booking.state import transition_booking_status
@@ -26,6 +27,7 @@ from app.models.station import Station, StationStatus
 from app.models.user import User, UserRole
 from app.models.vehicle import Vehicle
 from app.schemas.booking import (
+    AutoBookResponse,
     ManualSlotBookingResponse,
     BookingModificationResponse,
     BookingCancellationResponse,
@@ -432,6 +434,93 @@ def _candidate_slots(
     ]
 
 
+def _score_candidate_slots(
+    items: list[RecommendedSlotItem],
+) -> list[RecommendedSlotItem]:
+    """Rank candidates by the equally weighted normalized metrics available per item."""
+    if not items:
+        return []
+
+    factor_values: dict[str, list[float]] = {
+        "arrival_time": [ensure_utc(item.start_time).timestamp() for item in items],
+        "price": [
+            item.estimated_cost
+            for item in items
+            if item.estimated_cost is not None
+        ],
+        "charging_time": [
+            item.estimated_charging_time_minutes
+            for item in items
+        ],
+    }
+    bounds = {
+        factor: (min(values), max(values))
+        for factor, values in factor_values.items()
+        if values
+    }
+    factor_labels = {
+        "arrival_time": "earlier slot",
+        "price": "lower estimated price",
+        "charging_time": "shorter charging time",
+    }
+    scored: list[RecommendedSlotItem] = []
+    for item in items:
+        values = {
+            "arrival_time": ensure_utc(item.start_time).timestamp(),
+        }
+        if item.estimated_cost is not None:
+            values["price"] = item.estimated_cost
+        values["charging_time"] = item.estimated_charging_time_minutes
+
+        normalized = {
+            factor: (
+                0.0
+                if bounds[factor][0] == bounds[factor][1]
+                else (value - bounds[factor][0])
+                / (bounds[factor][1] - bounds[factor][0])
+            )
+            for factor, value in values.items()
+        }
+        available_factors = list(normalized)
+        unavailable_factors = ["detour", "reliability"]
+        if item.estimated_cost is None:
+            unavailable_factors.append("price")
+        score = round(
+            100.0 * (1.0 - sum(normalized.values()) / len(normalized)),
+            2,
+        )
+        reasons = [
+            factor_labels[factor]
+            for factor, value in normalized.items()
+            if value <= 0.25
+        ]
+        if not reasons:
+            reasons = ["balanced score across available factors"]
+        scored.append(
+            item.model_copy(
+                update={
+                    "score": score,
+                    "available_factors": available_factors,
+                    "unavailable_factors": unavailable_factors,
+                    "selection_reasons": reasons,
+                }
+            )
+        )
+
+    scored.sort(
+        key=lambda item: (
+            -(item.score if item.score is not None else -math.inf),
+            ensure_utc(item.start_time),
+            item.station_id,
+            item.charger_id,
+        )
+    )
+    return [
+        item.model_copy(update={"rank": rank})
+        for rank, item in enumerate(scored, start=1)
+    ]
+
+
 def recommend_slots(
     db: Session,
     user: User,
@@ -441,17 +530,167 @@ def recommend_slots(
     station_id: int | None = None,
     limit: int = 50,
 ) -> RecommendedSlotsResponse:
-    items = _candidate_slots(
-        db=db,
-        user=user,
-        vehicle_id=vehicle_id,
-        target_soc=target_soc,
-        slot_date=slot_date,
-        station_id=station_id,
+    items = _score_candidate_slots(
+        _candidate_slots(
+            db=db,
+            user=user,
+            vehicle_id=vehicle_id,
+            target_soc=target_soc,
+            slot_date=slot_date,
+            station_id=station_id,
+        )
     )
     return RecommendedSlotsResponse(
         total=len(items),
         items=items[:limit],
+    )
+
+
+def auto_book_slot(
+    db: Session,
+    user: User,
+    vehicle_id: int,
+    latitude: float,
+    longitude: float,
+    slot_date: date,
+    target_soc: int = 80,
+    confirmation_mode: str = "confirm_first",
+    ip_address: str | None = None,
+) -> AutoBookResponse:
+    if confirmation_mode not in {"confirm_first", "book_immediately"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Confirmation mode must be confirm_first or book_immediately.",
+        )
+    now_utc = datetime.now(timezone.utc)
+    if slot_date < now_utc.date():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Slot date cannot be in the past.",
+        )
+    if slot_date > now_utc.date() + timedelta(days=7):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Auto-booking is limited to the next seven days.",
+        )
+
+    reachable = find_reachable_stations(
+        db=db,
+        user=user,
+        vehicle_id=vehicle_id,
+        latitude=latitude,
+        longitude=longitude,
+        limit=10_000,
+    )
+    reachable_station_ids = {station.id for station in reachable.stations}
+
+    def candidates_for(candidate_date: date) -> list[RecommendedSlotItem]:
+        candidates = [
+            item
+            for item in _candidate_slots(
+                db=db,
+                user=user,
+                vehicle_id=vehicle_id,
+                target_soc=target_soc,
+                slot_date=candidate_date,
+            )
+            if item.station_id in reachable_station_ids
+        ]
+        if confirmation_mode == "book_immediately":
+            candidates = [
+                item for item in candidates if item.price_per_kwh is not None
+            ]
+        return _score_candidate_slots(candidates)
+
+    candidates = candidates_for(slot_date)
+    alternatives: list[RecommendedSlotItem] = []
+    if not candidates:
+        last_date = now_utc.date() + timedelta(days=7)
+        for day_offset in range(1, 8):
+            alternative_date = slot_date + timedelta(days=day_offset)
+            if alternative_date > last_date:
+                break
+            alternatives.extend(candidates_for(alternative_date))
+            if len(alternatives) >= 3:
+                alternatives = alternatives[:3]
+                break
+        if (
+            confirmation_mode == "book_immediately"
+            and reachable_station_ids
+            and not alternatives
+        ):
+            unpriced_today = [
+                item
+                for item in _candidate_slots(
+                    db=db,
+                    user=user,
+                    vehicle_id=vehicle_id,
+                    target_soc=target_soc,
+                    slot_date=slot_date,
+                )
+                if item.station_id in reachable_station_ids
+            ]
+            if unpriced_today:
+                return AutoBookResponse(
+                    status="configuration_required",
+                    alternatives=_score_candidate_slots(unpriced_today)[:3],
+                    unavailable_factors=["detour", "reliability"],
+                    message=(
+                        "A reachable slot exists, but its station has no configured "
+                        "tariff, so a reservation fee and payment hold cannot be created."
+                    ),
+                )
+        return AutoBookResponse(
+            status="no_slot",
+            alternatives=alternatives,
+            unavailable_factors=["detour", "reliability"],
+            message=(
+                "No compatible reachable slot is available on the requested date."
+                if alternatives
+                else (
+                    "No compatible reachable slot was found within the next seven days. "
+                    "Update your location or battery level and try again."
+                )
+            ),
+        )
+
+    selected = candidates[0]
+    if confirmation_mode == "confirm_first":
+        return AutoBookResponse(
+            status="suggested",
+            selected_slot=selected,
+            unavailable_factors=selected.unavailable_factors,
+            message=(
+                "Recommended reachable slot selected. Confirm it to create a "
+                "five-minute payment hold."
+            ),
+        )
+
+    booking, _, _, _ = _create_slot_booking(
+        db=db,
+        user=user,
+        station_id=selected.station_id,
+        vehicle_id=vehicle_id,
+        charger_id=selected.charger_id,
+        start_time=selected.start_time,
+        booking_status=BookingStatus.HELD,
+        target_soc=target_soc,
+        ip_address=ip_address,
+    )
+    if booking.hold_expires_at is None:
+        raise RuntimeError("Persisted auto-book hold is missing its expiration time.")
+    return AutoBookResponse(
+        status="held",
+        selected_slot=selected,
+        booking_id=booking.id,
+        booking_status=booking.status.value,
+        reservation_fee_amount=booking.reservation_fee_amount,
+        hold_expires_at=ensure_utc(booking.hold_expires_at),
+        unavailable_factors=selected.unavailable_factors,
+        message=(
+            "Reachable slot held for five minutes. Complete reservation-fee payment "
+            "to confirm the booking."
+        ),
     )
 
 
