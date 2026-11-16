@@ -43,10 +43,6 @@ def upgrade() -> None:
         unique=False,
     )
 
-    op.add_column(
-        "bookings",
-        sa.Column("confirmed_at", sa.DateTime(timezone=True), nullable=True),
-    )
     op.add_column("bookings", sa.Column("tariff_snapshot_id", sa.Integer(), nullable=True))
     op.add_column(
         "bookings",
@@ -63,10 +59,6 @@ def upgrade() -> None:
     op.add_column(
         "bookings",
         sa.Column("tariff_peak_periods", sa.JSON(), server_default=sa.text("'[]'"), nullable=False),
-    )
-    op.add_column(
-        "bookings",
-        sa.Column("reservation_fee_amount", sa.Float(), server_default="50", nullable=False),
     )
     op.add_column(
         "bookings",
@@ -189,13 +181,11 @@ def downgrade() -> None:
         "energy_cost_amount",
         "energy_delivered_kwh",
         "reservation_fee_paid_amount",
-        "reservation_fee_amount",
         "tariff_peak_periods",
         "tariff_tax_rate_percent",
         "tariff_idle_fee_per_minute",
         "tariff_price_per_kwh",
         "tariff_snapshot_id",
-        "confirmed_at",
     ):
         op.drop_column("bookings", column)
     op.drop_index("ix_station_tariffs_effective_from", table_name="station_tariffs")

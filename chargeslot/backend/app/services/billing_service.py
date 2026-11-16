@@ -4,7 +4,6 @@ from decimal import Decimal, ROUND_CEILING, ROUND_HALF_UP
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.models.booking import Booking, BookingStatus
 from app.models.charging_session_reading import ChargingSessionReading
 from app.models.payment_record import PaymentRecord
@@ -51,9 +50,6 @@ def snapshot_booking_tariff(
     booking.tariff_tax_rate_percent = tariff.tax_rate_percent if tariff else 0.0
     booking.tariff_peak_periods = list(tariff.peak_periods or []) if tariff else []
     booking.confirmed_at = confirmation_time
-    booking.reservation_fee_amount = float(
-        _money(settings.RESERVATION_FEE_INR)
-    )
 
 
 def _is_peak_period(booking: Booking) -> bool:
