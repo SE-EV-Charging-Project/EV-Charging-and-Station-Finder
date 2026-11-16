@@ -19,6 +19,7 @@ from app.schemas.booking import (
     PaymentConfirmationWebhookRequest,
 )
 from app.stations.slots import ensure_utc
+from app.services.billing_service import snapshot_booking_tariff
 
 RESERVATION_FEE_RATE = 0.10
 MIN_RESERVATION_FEE_INR = 1.0
@@ -128,6 +129,7 @@ def record_payment_confirmation(
         )
         if amount_matches and hold_is_valid:
             transition_booking_status(booking, BookingStatus.CONFIRMED)
+            snapshot_booking_tariff(db, booking)
             message = "Reservation payment verified; booking confirmed."
         else:
             event.refund_due = True

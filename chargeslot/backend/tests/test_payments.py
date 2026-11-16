@@ -58,7 +58,7 @@ def test_payment_order_uses_server_calculated_amount(monkeypatch):
 
     result = PaymentService.create_order(
         db=None,
-        user=SimpleNamespace(id=1),
+        user=SimpleNamespace(id=1, role=UserRole.DRIVER),
         data=PaymentOrderRequest(
             vehicle_id=1,
             station_id=1,
@@ -119,7 +119,7 @@ def test_payment_signature_verification(monkeypatch):
             razorpay_payment_id=payment_id,
             razorpay_signature=signature,
         ),
-        user=SimpleNamespace(id=1),
+        user=SimpleNamespace(id=1, role=UserRole.DRIVER),
     )
 
     assert result.verified is True
@@ -137,7 +137,7 @@ def test_invalid_payment_signature_rejected(monkeypatch):
                 razorpay_payment_id="pay_test123",
                 razorpay_signature="invalid",
             ),
-            user=SimpleNamespace(id=1),
+            user=SimpleNamespace(id=1, role=UserRole.DRIVER),
         )
 
     assert exc.value.status_code == 400
@@ -178,7 +178,7 @@ def test_payment_order_rejects_another_user(monkeypatch):
                 razorpay_payment_id=payment_id,
                 razorpay_signature=signature,
             ),
-            user=SimpleNamespace(id=1),
+            user=SimpleNamespace(id=1, role=UserRole.DRIVER),
         )
 
     assert exc.value.status_code == 403
@@ -192,7 +192,7 @@ def test_order_rejected_when_gateway_not_configured(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         PaymentService.create_order(
             db=None,
-            user=SimpleNamespace(id=1),
+            user=SimpleNamespace(id=1, role=UserRole.DRIVER),
             data=PaymentOrderRequest(
                 vehicle_id=1,
                 station_id=1,
@@ -246,7 +246,7 @@ def test_uncaptured_payment_rejected(monkeypatch):
                 razorpay_payment_id=payment_id,
                 razorpay_signature=signature,
             ),
-            user=SimpleNamespace(id=1),
+            user=SimpleNamespace(id=1, role=UserRole.DRIVER),
         )
 
     assert exc.value.status_code == 400
@@ -293,6 +293,15 @@ def test_saved_payment_method_schema_rejects_invalid_data():
 
     with pytest.raises(ValidationError):
         valid_saved_method(cvv="123")
+
+    with pytest.raises(ValidationError):
+        valid_saved_method(token_reference="4111 1111 1111 1111")
+
+    with pytest.raises(ValidationError):
+        valid_saved_method(token_reference="123")
+
+    with pytest.raises(ValidationError):
+        valid_saved_method(token_reference="   ")
 
 
 def test_saved_payment_method_crud_and_default_promotion(db_session):

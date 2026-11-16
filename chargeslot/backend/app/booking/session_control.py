@@ -24,6 +24,7 @@ from app.schemas.session import (
     SessionStopTransactionResponse,
 )
 from app.booking.state import transition_booking_status
+from app.services.billing_service import calculate_final_bill, update_payment_due
 
 
 def _role_value(user: User) -> str:
@@ -443,6 +444,14 @@ def record_session_stop_transaction(
     booking.session_transaction_id = payload.transaction_id
     booking.meter_stop_wh = payload.meter_stop_wh
     booking.stop_event_idempotency_key = idempotency_key
+    db.flush()
+    calculate_final_bill(
+        db,
+        booking,
+        ended_at=observed_at,
+        meter_stop_wh=payload.meter_stop_wh,
+    )
+    update_payment_due(db, booking)
     commands = (
         db.query(ChargingSessionCommand)
         .filter(

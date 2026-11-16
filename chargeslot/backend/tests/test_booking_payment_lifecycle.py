@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.models.booking import Booking, BookingStatus
 from app.models.booking_payment_event import BookingPaymentEvent
 from app.models.booking_slot_claim import BookingSlotClaim
+from app.models.station import Station, StationStatus
 from app.models.user import User, UserRole
 from app.schemas.booking import PaymentConfirmationWebhookRequest
 
@@ -24,6 +25,22 @@ def _create_held_booking(db_session, *, hold_expires_at=None):
         is_active=True,
     )
     db_session.add(user)
+    db_session.flush()
+
+    db_session.add(
+        Station(
+            id=1,
+            operator_id=user.id,
+            name="Payment Test Station",
+            address="1 Payment Road",
+            latitude=12.97,
+            longitude=77.59,
+            contact_phone="9000000001",
+            price_per_kwh=10.0,
+            status=StationStatus.APPROVED,
+            is_active=True,
+        )
+    )
     db_session.flush()
 
     booking = Booking(

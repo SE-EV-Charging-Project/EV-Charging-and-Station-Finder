@@ -9,6 +9,8 @@ from app.booking.payments import record_payment_confirmation
 from app.booking.session_control import request_session_stop
 from app.core.config import settings
 from app.db.session import get_db
+from app.models.booking import Booking
+from app.models.payment_record import PaymentRecord
 from app.models.user import User
 from app.schemas.booking import (
     BatteryLevelInputRequest,
@@ -31,6 +33,7 @@ from app.schemas.booking import (
     SlotHoldResponse,
 )
 from app.services.booking_service import BookingService
+from app.services.payment_service import PaymentService
 from app.schemas.session import SessionStopCommandResponse
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
@@ -197,7 +200,9 @@ def get_recommended_slots(
     summary="Book a selected compatible slot",
     description=(
         "Creates a five-minute Held booking with a reservation fee only if the selected "
-        "compatible slot is still free and within station hours (REQ-F3-11 / CS19-065)."
+        "compatible slot is still free and within station hours. The booking becomes "
+        "Confirmed only after its reservation payment is verified "
+        "(REQ-F3-11 / CS19-065 / REQ-F4-04)."
     ),
 )
 def post_manual_slot_booking(
@@ -336,7 +341,7 @@ def patch_booking(
     response_model=BookingCancellationResponse,
     status_code=status.HTTP_200_OK,
     summary="Cancel a booking",
-    description="Cancels an owned booking and applies a 10% estimated-cost fee less than 30 minutes before its start (REQ-F3-24 / CS19-078).",
+    description="Cancels an owned booking, applies the late cancellation fee when applicable, and submits eligible captured payments for gateway refund (REQ-F3-24 / CS19-078 / REQ-F4-08).",
 )
 def post_cancel_booking(
     request: Request,
@@ -345,9 +350,35 @@ def post_cancel_booking(
     db: Session = Depends(get_db),
 ) -> BookingCancellationResponse:
     client_ip = request.client.host if request.client else None
-    return BookingService.cancel_booking(
+    result = BookingService.cancel_booking(
         db=db,
         user=current_user,
         booking_id=booking_id,
         ip_address=client_ip,
     )
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if booking is not None:
+        has_captured_payment = (
+            db.query(PaymentRecord.id)
+            .filter(
+                PaymentRecord.booking_id == booking.id,
+                PaymentRecord.user_id == booking.user_id,
+                PaymentRecord.payment_type.in_(("reservation", "balance", "session")),
+                PaymentRecord.status == "captured",
+            )
+            .first()
+            is not None
+        )
+        if has_captured_payment:
+            owner = db.query(User).filter(User.id == booking.user_id).first()
+            if owner is None:
+                raise HTTPException(status_code=404, detail="Booking owner not found.")
+            refund = PaymentService.refund_booking(
+                db,
+                owner,
+                booking.id,
+                f"cancel-refund:{booking.id}",
+            )
+            result.refund_status = refund.status
+            result.refund_due_at = refund.refund_due_at
+    return result
