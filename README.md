@@ -17,6 +17,8 @@ See the [backend README](chargeslot/backend/README.md) for the battery-level API
 
 - [Architecture diagram](doc/architecture.md) — application components and request/data flows
 - [UML class diagram](doc/uml.md) — core domain entities and their relationships
+- [Delivery and production-readiness plan (PDF)](doc/chargeslot-delivery-plan.pdf) — phased security, performance, reliability, and cost plan
+- [Plan source](doc/chargeslot-delivery-plan.md) — accessible and editable Markdown version
 
 Both diagrams use Mermaid and render in GitHub and compatible Markdown viewers.
 
