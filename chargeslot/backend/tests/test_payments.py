@@ -396,3 +396,73 @@ def test_user_cannot_delete_another_users_saved_method(db_session):
     methods = PaymentService.list_saved_payment_methods(db_session, owner)
     assert len(methods) == 1
     assert methods[0].id == saved.id
+
+
+def test_demo_payment_flow_and_invoice_download(client, db_session):
+    from datetime import datetime, timezone, timedelta
+    from app.models.booking import Booking, BookingStatus
+    from app.models.station import Station, StationStatus
+    from app.utils.security import create_access_token
+
+    driver = create_test_user(db_session, 25)
+    station = Station(
+        id=99,
+        operator_id=driver.id,
+        name="Demo Testing Station",
+        address="100 Demo Road",
+        latitude=12.97,
+        longitude=77.59,
+        contact_phone="9876543210",
+        price_per_kwh=16.0,
+        status=StationStatus.APPROVED,
+        is_active=True,
+    )
+    db_session.add(station)
+    db_session.flush()
+
+    booking = Booking(
+        user_id=driver.id,
+        station_id=station.id,
+        charger_id=1,
+        status=BookingStatus.CONFIRMED,
+        est_energy_kwh=20.0,
+        start_time=datetime.now(timezone.utc),
+        end_time=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    db_session.add(booking)
+    db_session.commit()
+    db_session.refresh(booking)
+
+    token = create_access_token({"sub": str(driver.id), "email": driver.email})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Preview
+    resp_prev = client.get(f"/api/v1/payments/demo/preview/{booking.id}", headers=headers)
+    assert resp_prev.status_code == 200
+    prev_data = resp_prev.json()
+    assert prev_data["booking_id"] == booking.id
+    assert prev_data["total_amount"] > 0
+
+    # 2. Complete and pay
+    resp_pay = client.post(
+        "/api/v1/payments/demo/complete-and-pay",
+        json={"booking_id": booking.id, "payment_method": "upi"},
+        headers=headers,
+    )
+    assert resp_pay.status_code == 200
+    pay_data = resp_pay.json()
+    assert pay_data["status"] == "captured"
+    assert "invoice_url" in pay_data
+
+    # 3. Verify history reflects invoice URL
+    resp_hist = client.get("/api/v1/payments/history", headers=headers)
+    assert resp_hist.status_code == 200
+    hist_items = resp_hist.json()
+    assert any(item["booking_id"] == booking.id and item["invoice_url"] is not None for item in hist_items)
+
+    # 4. Download PDF invoice
+    resp_inv = client.get(f"/api/v1/billing/bookings/{booking.id}/invoice", headers=headers)
+    assert resp_inv.status_code == 200
+    assert resp_inv.headers.get("content-type") == "application/pdf"
+    assert resp_inv.content.startswith(b"%PDF")
+

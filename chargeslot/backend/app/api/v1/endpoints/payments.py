@@ -1,4 +1,9 @@
-from datetime import date
+from datetime import date, datetime, timezone
+import secrets
+from pydantic import BaseModel
+from app.models.booking_slot_claim import BookingSlotClaim
+from app.models.station import Station
+from app.models.user import User, UserRole
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
@@ -221,3 +226,140 @@ def delete_saved_payment_method(
         db=db, user=current_user, payment_method_id=payment_method_id
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------------------------------
+# Interactive Demo / Localhost Gateway Endpoints
+# --------------------------------------------------------------------------
+class DemoPaymentPreviewResponse(BaseModel):
+    booking_id: int
+    station_name: str
+    price_per_kwh: float
+    est_energy_kwh: float
+    energy_cost: float
+    tax_amount: float
+    total_amount: float
+
+
+class DemoPaymentRequest(BaseModel):
+    booking_id: int
+    payment_method: str = "upi"
+    energy_kwh: float | None = None
+
+
+class DemoPaymentResponse(BaseModel):
+    booking_id: int
+    payment_id: int
+    transaction_id: str
+    amount_inr: float
+    payment_method: str
+    status: str
+    message: str
+    invoice_url: str
+
+
+@router.get("/demo/preview/{booking_id}", response_model=DemoPaymentPreviewResponse)
+def demo_preview_payment(
+    booking_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> DemoPaymentPreviewResponse:
+    PaymentService._require_driver(current_user)
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found.")
+    if current_user.role == UserRole.DRIVER and booking.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You do not own this booking.")
+
+    station = db.query(Station).filter(Station.id == booking.station_id).first() if booking.station_id else None
+    price_per_kwh = float(station.price_per_kwh if station and station.price_per_kwh else 15.0)
+    station_name = station.name if station else "ChargeSlot Hub"
+
+    energy_kwh = float(booking.est_energy_kwh or 22.5)
+    energy_cost = round(energy_kwh * price_per_kwh, 2)
+    tax_rate = 0.05
+    tax_amount = round(energy_cost * tax_rate, 2)
+    total_amount = round(energy_cost + tax_amount, 2)
+
+    return DemoPaymentPreviewResponse(
+        booking_id=booking.id,
+        station_name=station_name,
+        price_per_kwh=price_per_kwh,
+        est_energy_kwh=energy_kwh,
+        energy_cost=energy_cost,
+        tax_amount=tax_amount,
+        total_amount=total_amount,
+    )
+
+
+@router.post("/demo/complete-and-pay", response_model=DemoPaymentResponse)
+def demo_complete_and_pay(
+    payload: DemoPaymentRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> DemoPaymentResponse:
+    PaymentService._require_driver(current_user)
+    booking = db.query(Booking).filter(Booking.id == payload.booking_id).first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found.")
+    if current_user.role == UserRole.DRIVER and booking.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You do not own this booking.")
+
+    station = db.query(Station).filter(Station.id == booking.station_id).first() if booking.station_id else None
+    price_per_kwh = float(station.price_per_kwh if station and station.price_per_kwh else 15.0)
+
+    energy_kwh = float(payload.energy_kwh or booking.est_energy_kwh or 22.5)
+    energy_cost = round(energy_kwh * price_per_kwh, 2)
+    tax_rate = 0.05  # 5% GST
+    tax_amount = round(energy_cost * tax_rate, 2)
+    idle_fee = 0.0
+    total_amount = round(energy_cost + tax_amount + idle_fee, 2)
+
+    now = datetime.now(timezone.utc)
+    booking.status = BookingStatus.COMPLETED
+    booking.session_ended_at = now
+    booking.energy_delivered_kwh = energy_kwh
+    booking.energy_cost_amount = energy_cost
+    booking.tax_amount = tax_amount
+    booking.idle_fee_amount = idle_fee
+    booking.final_bill_amount = total_amount
+    booking.payment_due = False
+    if booking.reservation_fee_paid_amount is None:
+        booking.reservation_fee_paid_amount = 0.0
+
+    # Delete slot claim so charger is free
+    db.query(BookingSlotClaim).filter(BookingSlotClaim.booking_id == booking.id).delete(synchronize_session=False)
+
+    # Record captured payment
+    txn_id = f"CS-PAY-{now.strftime('%Y%m%d')}-{secrets.token_hex(4).upper()}"
+    payment_record = PaymentRecord(
+        user_id=current_user.id,
+        booking_id=booking.id,
+        amount_paise=int(round(total_amount * 100)),
+        currency="INR",
+        payment_type="session",
+        gateway_reference=f"order_{secrets.token_hex(8)}",
+        gateway_payment_id=txn_id,
+        idempotency_key=f"demo-pay-{booking.id}-{secrets.token_hex(4)}",
+        status="captured",
+        details={
+            "payment_method": payload.payment_method,
+            "demo": True,
+            "simulated_at": now.isoformat(),
+        },
+    )
+    db.add(payment_record)
+    db.commit()
+    db.refresh(payment_record)
+
+    return DemoPaymentResponse(
+        booking_id=booking.id,
+        payment_id=payment_record.id,
+        transaction_id=txn_id,
+        amount_inr=total_amount,
+        payment_method=payload.payment_method,
+        status="captured",
+        message="Payment processed and session marked COMPLETED. Tax invoice is now available for download.",
+        invoice_url=f"/api/v1/billing/bookings/{booking.id}/invoice",
+    )
+

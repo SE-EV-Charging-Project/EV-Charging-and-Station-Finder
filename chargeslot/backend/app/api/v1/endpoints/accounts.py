@@ -1,6 +1,8 @@
 from datetime import datetime
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from app.utils.security import hash_password, verify_password, validate_password_policy
 
 from app.api.deps import (
     get_current_user,
@@ -898,6 +900,71 @@ def driver_sees_own_data_only(
         db=db,
         user=current_user,
         target_user_id=target_user_id,
+    )
+
+
+# ==============================================================================
+# Change Password (Authenticated Profile Action)
+# ==============================================================================
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., description="Current password")
+    new_password: str = Field(..., min_length=8, description="New password meeting complexity policy")
+
+
+class ChangePasswordResponse(BaseModel):
+    status: str
+    message: str
+
+
+@router.post(
+    "/change-password",
+    response_model=ChangePasswordResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Change user password from profile",
+    description="Updates password for authenticated user after verifying current password against bcrypt hash."
+)
+def change_password(
+    payload: ChangePasswordRequest,
+    req: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ChangePasswordResponse:
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect.",
+        )
+
+    is_valid, error_msg = validate_password_policy(payload.new_password)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=error_msg,
+        )
+
+    if verify_password(payload.new_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password cannot be the same as the current password.",
+        )
+
+    client_ip = req.client.host if req.client else None
+    current_user.hashed_password = hash_password(payload.new_password)
+    db.commit()
+
+    AuditService.log_action(
+        db=db,
+        user_id=current_user.id,
+        action="PASSWORD_CHANGE",
+        resource="user",
+        details="User successfully changed password via profile.",
+        ip_address=client_ip,
+    )
+
+    return ChangePasswordResponse(
+        status="success",
+        message="Password updated successfully.",
     )
 
 

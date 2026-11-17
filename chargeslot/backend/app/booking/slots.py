@@ -491,6 +491,11 @@ def _create_slot_booking(
             status_code=status.HTTP_409_CONFLICT,
             detail="Bookings are not available for this station.",
         )
+    if any(c.is_out_of_service for c in station.chargers) and all(c.is_out_of_service or not c.is_active for c in station.chargers):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This charging station is currently out of service.",
+        )
 
     charger = (
         db.query(Charger)
@@ -504,6 +509,11 @@ def _create_slot_booking(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Charger with ID {charger_id} was not found at station {station_id}.",
+        )
+    if charger.is_out_of_service or not charger.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This charging station charger is currently out of service.",
         )
 
     has_compatible_bookable_connector = (

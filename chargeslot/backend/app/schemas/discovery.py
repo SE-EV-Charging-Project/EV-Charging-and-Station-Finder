@@ -82,6 +82,7 @@ class NearbyStationItem(BaseModel):
         description="Maximum effective power for the selected vehicle's compatible connectors",
     )
     price_per_kwh: float | None = Field(default=None, description="Tariff price per kWh in INR (REQ-F2-10)")
+    is_out_of_service: bool = Field(default=False, description="Flag indicating station is shut down for maintenance")
     color_code: str | None = Field(default=None, description="Marker colour: green, amber, red, grey (REQ-F2-08)")
     status_label: str | None = Field(default=None, description="Accessibility text label e.g. Available, Occupied")
     badge_text: str | None = Field(default=None, description="Badge text e.g. '3/4 Available'")

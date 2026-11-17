@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.station import Station, StationStatus
 from app.models.charger import Charger, Connector, ConnectorStatus
 from app.models.user import User, UserRole
+from app.models.booking import Booking, BookingStatus
 from app.schemas.discovery import NearbyStationItem
 
 
@@ -128,10 +129,35 @@ def search_nearby_stations(
 
             tot = len(all_connectors)
             av = len(avail_connectors)
-            if tot == 0:
+
+            is_station_oos = (
+                not station.is_active
+                or (len(station.chargers) > 0 and len(active_chargers) == 0)
+            )
+
+            has_reserved = any(
+                conn.status == ConnectorStatus.RESERVED for conn in all_connectors
+            )
+            if not has_reserved and station.id:
+                active_booking = db.query(Booking).filter(
+                    Booking.station_id == station.id,
+                    Booking.status.in_([BookingStatus.CONFIRMED, BookingStatus.HELD]),
+                ).first()
+                if active_booking:
+                    has_reserved = True
+
+            if is_station_oos:
+                c_code = "red"
+                s_label = "Out of Service"
+                b_text = "Out of Service"
+            elif tot == 0:
                 c_code = "grey"
                 s_label = "Offline"
                 b_text = "0/0 Offline"
+            elif has_reserved:
+                c_code = "purple"
+                s_label = "Reserved"
+                b_text = f"Reserved ({av}/{tot} avail)" if tot > 0 else "Reserved"
             elif av == tot:
                 c_code = "green"
                 s_label = "Available"
@@ -164,6 +190,7 @@ def search_nearby_stations(
                 connector_types=connector_types,
                 max_power_kw=max_power,
                 price_per_kwh=getattr(station, "price_per_kwh", None),
+                is_out_of_service=is_station_oos,
                 color_code=c_code,
                 status_label=s_label,
                 badge_text=b_text,
