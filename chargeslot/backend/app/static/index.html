@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChargeSlot — EV Charging & Station Finder</title>
+  <meta name="description" content="ChargeSlot EV Charging Station Finder, Real-Time Slot Dashboard and Auto-Booking System." />
+  
+  <!-- OpenStreetMap Leaflet for Interactive Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  
+  <!-- Custom Modern Minimalist Styles -->
+  <link rel="stylesheet" href="/static/css/style.css?v=20261117_checkbox_align" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="brand-logo" aria-hidden="true">⚡</div>
+      <div>
+        <h1 class="brand-title">ChargeSlot</h1>
+        <p class="brand-tagline">EV Charging Station Finder &amp; Slot Reservation</p>
+      </div>
+    </div>
+
+    <!-- User / Auth Quick Status -->
+    <div class="header-auth" id="header-auth-section">
+      <span class="user-badge" id="current-user-badge">Guest Mode</span>
+      <button class="btn btn-secondary btn-sm" id="btn-auth-modal" type="button">Sign In / Register</button>
+      <button class="btn btn-outline btn-sm hidden" id="btn-logout" type="button">Sign Out</button>
+    </div>
+  </header>
+
+  <!-- Main Navigation Tabs -->
+  <nav class="app-nav" aria-label="Main Navigation">
+    <button class="nav-tab active" data-tab="tab-stations" type="button">
+      <span class="tab-icon">🗺️</span> Stations &amp; Map
+    </button>
+    <button class="nav-tab" data-tab="tab-navigation" type="button">
+      <span class="tab-icon">🧭</span> Route Preview &amp; Nav
+    </button>
+    <button class="nav-tab" data-tab="tab-booking" type="button">
+      <span class="tab-icon">⚡</span> Battery &amp; Booking
+    </button>
+    <button class="nav-tab" data-tab="tab-billing" type="button">
+      <span class="tab-icon">💳</span> Invoices &amp; Billing
+    </button>
+    <button class="nav-tab" data-tab="tab-profile" type="button">
+      <span class="tab-icon">👤</span> My Profile
+    </button>
+  </nav>
+
+  <!-- Global Alert Banner -->
+  <div class="alert-banner hidden" id="global-alert" role="alert">
+    <span id="global-alert-text"></span>
+    <button class="alert-close" id="btn-close-alert" type="button" aria-label="Dismiss">&times;</button>
+  </div>
+
+  <main class="app-main">
+    <!-- TAB 1: STATIONS & MAP -->
+    <section class="tab-content active" id="tab-stations">
+      <div class="stations-layout">
+        <!-- Sidebar Controls & Search -->
+        <aside class="stations-sidebar">
+          <div class="card search-card">
+            <h2 class="card-title">Find Charging Stations</h2>
+            <div class="form-group">
+              <label for="search-input">Search Station or Location</label>
+              <div class="input-with-button">
+                <input type="text" id="search-input" placeholder="e.g. Indiranagar, MG Road, Fast..." />
+                <button class="btn btn-primary" id="btn-search-stations" type="button">Search</button>
+              </div>
+            </div>
+
+            <!-- Filters Accordion / Grid -->
+            <div class="filter-grid">
+              <div class="form-group">
+                <label for="filter-connector">Connector Type</label>
+                <select id="filter-connector">
+                  <option value="">All Connectors</option>
+                  <option value="CCS2">CCS Type 2 (DC Fast)</option>
+                  <option value="Type 2">Type 2 (AC)</option>
+                  <option value="CHAdeMO">CHAdeMO (DC)</option>
+                  <option value="GB/T">GB/T (DC)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="filter-min-power">Min Power (kW)</label>
+                <input type="number" id="filter-min-power" min="0" max="350" placeholder="e.g. 50" />
+              </div>
+
+              <div class="form-group">
+                <label for="filter-radius">Search Radius: <strong id="radius-display">25 km</strong></label>
+                <input type="range" id="filter-radius" min="1" max="50" value="25" />
+              </div>
+
+              <div class="form-group form-check">
+                <input type="checkbox" id="filter-available-now" />
+                <label for="filter-available-now">Show only available now</label>
+              </div>
+            </div>
+
+            <div class="button-row">
+              <button class="btn btn-primary btn-block" id="btn-apply-filters" type="button">Apply Filters</button>
+              <button class="btn btn-secondary btn-block" id="btn-reset-filters" type="button">Reset</button>
+            </div>
+          </div>
+
+          <!-- Station Results List -->
+          <div class="stations-list-container">
+            <div class="list-header">
+              <h3 class="section-title">Stations Nearby (<span id="station-count">0</span>)</h3>
+              <button class="btn-link" id="btn-center-user-location" type="button">📍 My Location</button>
+            </div>
+            <div class="stations-cards-list" id="stations-list">
+              <div class="empty-state">Loading stations...</div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Interactive Map Container -->
+        <div class="map-wrapper">
+          <div id="map-container" aria-label="Interactive Charging Station Map"></div>
+          <div class="map-legend" aria-hidden="true">
+            <span class="legend-item"><span class="marker-dot available"></span> Available</span>
+            <span class="legend-item"><span class="marker-dot occupied"></span> Occupied</span>
+            <span class="legend-item"><span class="marker-dot reserved"></span> Reserved</span>
+            <span class="legend-item"><span class="marker-dot oos"></span> Out of Service</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: ROUTE PREVIEW & NAVIGATION -->
+    <section class="tab-content" id="tab-navigation">
+      <div class="grid-2-col">
+        <div class="card">
+          <h2 class="card-title">Route Preview &amp; Navigation Hand-off</h2>
+          <p class="card-desc">Calculate road distance, travel time with current traffic, and launch navigation in Google Maps, Apple Maps, or Waze (REQ-F2-25 / REQ-F2-26 / REQ-F2-28).</p>
+
+          <div class="form-group">
+            <label for="nav-target-station">Select Destination Station</label>
+            <select id="nav-target-station">
+              <option value="">Select a station...</option>
+            </select>
+          </div>
+
+          <div class="grid-2-col">
+            <div class="form-group">
+              <label for="nav-origin-lat">Origin Latitude</label>
+              <input type="number" id="nav-origin-lat" step="any" value="12.9352" />
+            </div>
+            <div class="form-group">
+              <label for="nav-origin-lon">Origin Longitude</label>
+              <input type="number" id="nav-origin-lon" step="any" value="77.6245" />
+            </div>
+          </div>
+
+          <div class="grid-2-col">
+            <div class="form-group">
+              <label for="nav-traffic">Current Traffic</label>
+              <select id="nav-traffic">
+                <option value="normal" selected>Normal Flow</option>
+                <option value="low">Low Traffic</option>
+                <option value="heavy">Heavy Traffic</option>
+                <option value="severe">Severe Congestion</option>
+              </select>
+            </div>
+            <div class="form-group form-check" style="align-self: flex-end; margin-bottom: 0.5rem;">
+              <input type="checkbox" id="nav-simulate-offline" />
+              <label for="nav-simulate-offline">Simulate Maps Outage (Fallback Test)</label>
+            </div>
+          </div>
+
+          <button class="btn btn-primary btn-block" id="btn-calculate-route" type="button">Get Route Preview</button>
+
+          <!-- Navigation Deep Link Launchers -->
+          <div class="nav-handoff-section" id="nav-handoff-links">
+            <h3 class="sub-title">Launch in External Navigation App (REQ-F2-26)</h3>
+            <div class="nav-app-buttons">
+              <a href="#" class="btn btn-outline nav-app-btn" id="link-gmaps" target="_blank" rel="noopener">🗺️ Google Maps</a>
+              <a href="#" class="btn btn-outline nav-app-btn" id="link-apple" target="_blank" rel="noopener">🍎 Apple Maps</a>
+              <a href="#" class="btn btn-outline nav-app-btn" id="link-waze" target="_blank" rel="noopener">🚙 Waze</a>
+              <a href="#" class="btn btn-outline nav-app-btn" id="link-geo" target="_blank" rel="noopener">📍 Default Nav (geo:)</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Route Details & Geometry Display -->
+        <div class="card" id="route-result-card">
+          <h2 class="card-title">Route Calculation Summary</h2>
+          <div id="route-summary-content">
+            <div class="empty-state">Select a station and click "Get Route Preview" to inspect the route.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: BATTERY & BOOKING -->
+    <section class="tab-content" id="tab-booking">
+      <div class="grid-2-col">
+        <!-- Battery Input & Estimator Card -->
+        <div class="card">
+          <h2 class="card-title">Battery Level &amp; Range Estimator (REQ-F3-01 / REQ-F3-07)</h2>
+          <p class="card-desc">Calculate usable road range, energy needed, charging duration, and estimated cost according to SRS Appendix B.</p>
+
+          <div class="form-group">
+            <label for="battery-vehicle-select">Selected Vehicle</label>
+            <select id="battery-vehicle-select">
+              <option value="1">Tata Nexon EV (40.5 kWh, 15.0 kWh/100km)</option>
+              <option value="2">MG ZS EV (50.3 kWh, 16.5 kWh/100km)</option>
+              <option value="3">Hyundai Ioniq 5 (72.6 kWh, 17.5 kWh/100km)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="battery-soc-slider">Current Battery Level: <strong id="soc-display">35%</strong></label>
+            <input type="range" id="battery-soc-slider" min="1" max="100" value="35" />
+          </div>
+
+          <div class="form-group">
+            <label for="battery-target-soc">Target Charge Level: <strong id="target-soc-display">80%</strong></label>
+            <input type="range" id="battery-target-soc" min="20" max="100" value="80" />
+          </div>
+
+          <div class="form-group">
+            <label for="booking-station-select">Charging Station &amp; Tariff</label>
+            <select id="booking-station-select">
+              <option value="1" data-tariff="18.5">Indiranagar Supercharger (₹18.50 / kWh, 60kW DC)</option>
+              <option value="2" data-tariff="15.0">MG Road Charging Hub (₹15.00 / kWh, 22kW AC)</option>
+              <option value="3" data-tariff="21.0">Koramangala Express (₹21.00 / kWh, 120kW DC)</option>
+            </select>
+          </div>
+
+          <!-- Live Estimates Display -->
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <span class="metric-label">Usable Range</span>
+              <span class="metric-value" id="val-usable-range">-- km</span>
+              <span class="metric-sub">(10% safety reserve deducted)</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Energy Required</span>
+              <span class="metric-value" id="val-energy-required">-- kWh</span>
+              <span class="metric-sub">(90% charging efficiency)</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Estimated Charging Time</span>
+              <span class="metric-value" id="val-charging-time">-- min</span>
+              <span class="metric-sub">Rounded to 15-min slot</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Estimated Cost</span>
+              <span class="metric-value" id="val-charging-cost">₹ --</span>
+              <span class="metric-sub">Tariff-based calculation</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Slot Timeline & Claim Card -->
+        <div class="card">
+          <h2 class="card-title">Slot Reservation (REQ-F2-22 / REQ-F3-12)</h2>
+          <p class="card-desc">Select an available 15-minute slot to temporarily hold and reserve with instant confirmation.</p>
+
+          <div class="form-group">
+            <label for="slot-date-picker">Date</label>
+            <input type="date" id="slot-date-picker" />
+          </div>
+
+          <div class="slot-timeline-container">
+            <h3 class="sub-title">Timeline Schedule</h3>
+            <div class="slot-grid" id="slot-grid-display">
+              <!-- Dynamically populated 15-min intervals -->
+            </div>
+          </div>
+
+          <div class="booking-summary-box hidden" id="booking-confirmation-box">
+            <h4>Selected Slot</h4>
+            <p id="selected-slot-details"></p>
+            <button class="btn btn-primary btn-block" id="btn-confirm-slot-claim" type="button">Reserve This Slot</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: INVOICES & BILLING -->
+    <section class="tab-content" id="tab-billing">
+      <div class="grid-2-col">
+        <div class="card">
+          <h2 class="card-title">Payment &amp; Invoices (F4 Billing)</h2>
+          <p class="card-desc">Download PDF invoices for completed charging sessions with full line items, energy consumption, and GST breakdown.</p>
+          
+          <div class="form-group">
+            <label for="invoice-booking-id">Booking ID</label>
+            <div class="input-with-button">
+              <input type="number" id="invoice-booking-id" placeholder="e.g. 1" value="1" min="1" />
+              <button class="btn btn-primary" id="btn-download-invoice" type="button">Download PDF</button>
+            </div>
+          </div>
+
+          <div id="invoice-download-status"></div>
+
+          <div style="margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid rgba(255,255,255,0.08);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+              <span style="font-size: 0.85rem; font-weight: 600; color: var(--brand-cyan);">⚡ Payment &amp; Session Completion</span>
+              <span class="tag-badge avail" style="font-size: 0.7rem;">Demo Gateway</span>
+            </div>
+            <p style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 0.85rem;">
+              Pay for your active booking through UPI or Card to mark the charging session completed and generate its tax invoice.
+            </p>
+            <button class="btn btn-secondary btn-block" id="btn-open-payment-modal" type="button">
+              💳 Pay Charging Bill
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">Recent Payment Records</h2>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Booking ID</th>
+                  <th>Amount</th>
+                  <th>Type</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="payment-history-tbody">
+                <tr>
+                  <td colspan="5" class="text-center">Loading transactions...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 5: MY PROFILE & SETTINGS -->
+    <section class="tab-content" id="tab-profile">
+      <!-- Guest Placeholder -->
+      <div id="profile-guest-view" class="card" style="text-align: center; padding: 3rem 1.5rem; max-inline-size: 540px; margin: 0 auto;">
+        <div style="font-size: 3rem; margin-bottom: 0.75rem;">👤</div>
+        <h2 class="card-title" style="margin-bottom: 0.5rem;">Sign In to View Your Profile</h2>
+        <p class="card-desc" style="margin-bottom: 1.5rem;">
+          Access your EV preferences, update contact details, change your password, and customize charging thresholds.
+        </p>
+        <button class="btn btn-primary" id="btn-profile-guest-signin" type="button" style="padding: 0.75rem 2rem;">
+          Sign In / Register
+        </button>
+      </div>
+
+      <!-- Authenticated Profile View -->
+      <div id="profile-auth-view" class="hidden">
+        <div class="grid-2-col">
+          <!-- Left Column: User Overview & Charging Preferences -->
+          <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+            <!-- Profile Identity Card -->
+            <div class="card">
+              <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.25rem;">
+                <div style="inline-size: 54px; block-size: 54px; border-radius: 50%; background: linear-gradient(135deg, var(--brand-green), var(--brand-cyan)); display: flex; align-items: center; justify-content: center; font-size: 1.5rem; color: #0f172a; font-weight: 700;" id="profile-avatar">
+                  U
+                </div>
+                <div>
+                  <h2 class="card-title" id="profile-display-name" style="margin: 0; font-size: 1.2rem;">User Name</h2>
+                  <div style="display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem;">
+                    <span class="user-badge" id="profile-display-role" style="font-size: 0.75rem;">DRIVER</span>
+                    <span style="font-size: 0.8rem; color: #94a3b8;" id="profile-display-email">email@example.com</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style="font-size: 0.8rem; color: #64748b; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.06);">
+                Member Since: <span id="profile-created-date" style="color: #cbd5e1;">-</span>
+              </div>
+            </div>
+
+            <!-- Profile & EV Preferences Form -->
+            <div class="card">
+              <h2 class="card-title">EV Charging &amp; Contact Preferences</h2>
+              <p class="card-desc">Tune your charging mode presets, battery alerts, and discovery range.</p>
+
+              <form id="form-edit-profile">
+                <div class="form-group">
+                  <label for="profile-input-name">Full Name</label>
+                  <input type="text" id="profile-input-name" required minlength="2" placeholder="Your name" />
+                </div>
+
+                <div class="form-group">
+                  <label for="profile-input-phone">Phone Number</label>
+                  <input type="tel" id="profile-input-phone" required placeholder="+919876543210" />
+                </div>
+
+                <div class="form-group">
+                  <label for="profile-charging-mode">Default Charging Mode</label>
+                  <select id="profile-charging-mode">
+                    <option value="Fastest">⚡ Fastest (High Power DC Priority)</option>
+                    <option value="Cheapest">💰 Cheapest (Lowest Tariff / AC)</option>
+                    <option value="Nearest">📍 Nearest (Shortest Distance)</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <div style="display: flex; justify-content: space-between;">
+                    <label for="profile-target-battery">Default Target Battery SoC</label>
+                    <span id="profile-target-battery-display" style="color: var(--brand-cyan); font-weight: 600;">80%</span>
+                  </div>
+                  <input type="range" id="profile-target-battery" min="50" max="100" value="80" step="5" />
+                </div>
+
+                <div class="form-group">
+                  <div style="display: flex; justify-content: space-between;">
+                    <label for="profile-low-battery">Low Battery Warning Threshold</label>
+                    <span id="profile-low-battery-display" style="color: #f59e0b; font-weight: 600;">20%</span>
+                  </div>
+                  <input type="range" id="profile-low-battery" min="10" max="30" value="20" step="1" />
+                </div>
+
+                <div class="form-group">
+                  <div style="display: flex; justify-content: space-between;">
+                    <label for="profile-search-radius">Default Search Radius</label>
+                    <span id="profile-search-radius-display" style="color: #a855f7; font-weight: 600;">25 km</span>
+                  </div>
+                  <input type="range" id="profile-search-radius" min="1" max="50" value="25" step="1" />
+                </div>
+
+                <div class="form-group">
+                  <label style="margin-bottom: 0.6rem; display: block; font-weight: 600; color: #cbd5e1;">Notifications</label>
+                  <div style="display: flex; flex-direction: column; gap: 0.6rem; font-size: 0.875rem;">
+                    <label class="form-check" style="display: flex; align-items: center; gap: 0.65rem; color: #cbd5e1; cursor: pointer; margin: 0;">
+                      <input type="checkbox" id="profile-notify-email" />
+                      <span>Email notifications for bookings and invoices</span>
+                    </label>
+                    <label class="form-check" style="display: flex; align-items: center; gap: 0.65rem; color: #cbd5e1; cursor: pointer; margin: 0;">
+                      <input type="checkbox" id="profile-notify-sms" />
+                      <span>SMS alerts for slot time reminders</span>
+                    </label>
+                    <label class="form-check" style="display: flex; align-items: center; gap: 0.65rem; color: #cbd5e1; cursor: pointer; margin: 0;">
+                      <input type="checkbox" id="profile-notify-push" />
+                      <span>Push notifications</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div id="profile-save-status" style="margin-bottom: 0.75rem;"></div>
+
+                <button class="btn btn-primary btn-block" id="btn-save-profile" type="submit">
+                  Save Profile &amp; Preferences
+                </button>
+              </form>
+            </div>
+          </div>
+
+          <!-- Right Column: Change Password & Security -->
+          <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+            <!-- Change Password Card -->
+            <div class="card">
+              <h2 class="card-title">Change Password</h2>
+              <p class="card-desc">Update your account credentials using bcrypt-hashed authentication.</p>
+
+              <form id="form-change-password">
+                <div class="form-group">
+                  <label for="pwd-current">Current Password</label>
+                  <input type="password" id="pwd-current" required placeholder="••••••••" autocomplete="current-password" />
+                </div>
+
+                <div class="form-group">
+                  <label for="pwd-new">New Password</label>
+                  <input type="password" id="pwd-new" required minlength="8" placeholder="••••••••" autocomplete="new-password" />
+                  <span style="font-size: 0.72rem; color: #94a3b8; margin-top: 0.25rem; display: block;">
+                    Must be min 8 characters with at least 1 uppercase, 1 lowercase, 1 number, and 1 special symbol.
+                  </span>
+                </div>
+
+                <div class="form-group">
+                  <label for="pwd-confirm">Confirm New Password</label>
+                  <input type="password" id="pwd-confirm" required minlength="8" placeholder="••••••••" autocomplete="new-password" />
+                </div>
+
+                <div id="pwd-change-status" style="margin-bottom: 0.75rem;"></div>
+
+                <button class="btn btn-primary btn-block" id="btn-submit-change-password" type="submit">
+                  Update Password
+                </button>
+              </form>
+            </div>
+
+            <!-- Security & Session Card -->
+            <div class="card">
+              <h2 class="card-title">Account &amp; Security</h2>
+              <div style="display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.85rem; margin-bottom: 1.25rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.06);">
+                  <span style="color: #94a3b8;">Account Status</span>
+                  <span class="tag-badge avail">Active &amp; Verified</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.06);">
+                  <span style="color: #94a3b8;">Authentication Type</span>
+                  <span style="color: #cbd5e1; font-family: monospace;">JWT Bearer Token</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span style="color: #94a3b8;">Password Encryption</span>
+                  <span style="color: #cbd5e1; font-family: monospace;">Bcrypt (Salted)</span>
+                </div>
+              </div>
+
+              <button class="btn btn-outline btn-block" id="btn-profile-logout-card" type="button" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.4);">
+                Sign Out of ChargeSlot
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Native HTML5 Dialog: Auth / Sign In Modal -->
+  <dialog class="modal-dialog" id="auth-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="auth-modal-title">Sign In to ChargeSlot</h3>
+        <button class="modal-close" id="btn-close-auth-modal" type="button" aria-label="Close">&times;</button>
+      </div>
+
+      <div class="modal-tabs">
+        <button class="modal-tab active" id="tab-btn-signin" type="button">Sign In</button>
+        <button class="modal-tab" id="tab-btn-signup" type="button">Register</button>
+      </div>
+
+      <!-- Sign In Form -->
+      <form id="form-signin" class="modal-form">
+        <div class="form-group">
+          <label for="signin-email">Email or Phone</label>
+          <input type="text" id="signin-email" required placeholder="name@example.com" autocomplete="username" />
+        </div>
+        <div class="form-group">
+          <label for="signin-password">Password</label>
+          <input type="password" id="signin-password" required placeholder="••••••••" autocomplete="current-password" />
+        </div>
+        <button class="btn btn-primary btn-block" type="submit">Sign In</button>
+        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.5rem;">
+          <span style="font-size: 0.75rem; color: var(--text-muted); text-align: center;">⚡ Quick Fill Credentials:</span>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="window.fillDemoCredentials('1234@gmail.com', 'Password@123')">
+            🚗 Fill EV Driver Credentials
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="window.fillDemoCredentials('operator@chargeslot.in', 'Operator@123')">
+            🏢 Fill Station Operator Credentials
+          </button>
+        </div>
+      </form>
+
+      <!-- Register Form -->
+      <form id="form-signup" class="modal-form hidden">
+        <div class="form-group">
+          <label for="signup-name">Full Name</label>
+          <input type="text" id="signup-name" placeholder="John Doe" />
+        </div>
+        <div class="form-group">
+          <label for="signup-email">Email</label>
+          <input type="email" id="signup-email" placeholder="john@example.com" />
+        </div>
+        <div class="form-group">
+          <label for="signup-phone">Phone (+91...)</label>
+          <input type="tel" id="signup-phone" placeholder="+919876543210" />
+        </div>
+        <div class="form-group">
+          <label for="signup-role">Role</label>
+          <select id="signup-role">
+            <option value="DRIVER">Driver</option>
+            <option value="OPERATOR">Station Operator</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="signup-password">Password (min 8 chars, 1 upper, 1 lower, 1 digit, 1 special)</label>
+          <input type="password" id="signup-password" placeholder="Pass123!@" />
+        </div>
+        <button class="btn btn-primary btn-block" type="submit">Create Account</button>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Native HTML5 Dialog: Interactive Demo Payment Gateway Modal -->
+  <dialog class="modal-dialog" id="payment-modal">
+    <div class="modal-content" style="max-inline-size: 460px;">
+      <div class="modal-header">
+        <div>
+          <h3 style="margin: 0; font-size: 1.15rem; color: #f8fafc; display: flex; align-items: center; gap: 0.5rem;">
+            <span>⚡</span> ChargeSlot Gateway
+          </h3>
+          <span style="font-size: 0.72rem; color: var(--brand-cyan); font-weight: 600;">SIMULATED CHECKOUT (DEMO)</span>
+        </div>
+        <button class="modal-close" id="btn-close-payment-modal" type="button" aria-label="Close">&times;</button>
+      </div>
+
+      <div id="payment-modal-body">
+        <!-- Order Breakdown -->
+        <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.85rem; margin-bottom: 1rem;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 0.35rem; font-size: 0.85rem;">
+            <span style="color: #94a3b8;">Station</span>
+            <strong id="pay-modal-station" style="color: #f1f5f9; text-align: right; max-width: 60%;">Loading...</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 0.35rem; font-size: 0.85rem;">
+            <span style="color: #94a3b8;">Booking Ref</span>
+            <span id="pay-modal-booking-id" style="color: #38bdf8; font-weight: 600;">#CS-00000001</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 0.35rem; font-size: 0.85rem;">
+            <span style="color: #94a3b8;">Energy Consumed</span>
+            <span id="pay-modal-energy" style="color: #f1f5f9;">22.50 kWh</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 0.35rem; font-size: 0.85rem;">
+            <span style="color: #94a3b8;">Energy Charge</span>
+            <span id="pay-modal-energy-cost" style="color: #f1f5f9;">₹0.00</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.85rem;">
+            <span style="color: #94a3b8;">GST (5%)</span>
+            <span id="pay-modal-tax" style="color: #f1f5f9;">₹0.00</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; padding-top: 0.5rem; border-top: 1px solid rgba(255,255,255,0.1); font-size: 1rem; font-weight: 700;">
+            <span style="color: #ffffff;">Total Payable</span>
+            <span id="pay-modal-total" style="color: #10b981;">₹0.00</span>
+          </div>
+        </div>
+
+        <!-- Payment Method Selection -->
+        <div style="margin-bottom: 1.25rem;">
+          <label style="display: block; font-size: 0.85rem; font-weight: 600; color: #cbd5e1; margin-bottom: 0.5rem;">Select Payment Method</label>
+          <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+            <label style="display: flex; align-items: center; gap: 0.75rem; background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 0.6rem 0.85rem; cursor: pointer;">
+              <input type="radio" name="demo-pay-method" value="upi" checked />
+              <span style="font-size: 1.1rem;">📱</span>
+              <div style="flex: 1;">
+                <div style="font-size: 0.85rem; font-weight: 600; color: #f8fafc;">UPI (Instant)</div>
+                <div style="font-size: 0.75rem; color: #94a3b8;">Google Pay, PhonePe, Paytm, BHIM</div>
+              </div>
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.75rem; background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 0.6rem 0.85rem; cursor: pointer;">
+              <input type="radio" name="demo-pay-method" value="card" />
+              <span style="font-size: 1.1rem;">💳</span>
+              <div style="flex: 1;">
+                <div style="font-size: 0.85rem; font-weight: 600; color: #f8fafc;">Credit / Debit Card</div>
+                <div style="font-size: 0.75rem; color: #94a3b8;">Visa, Mastercard, RuPay (•••• 4242)</div>
+              </div>
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.75rem; background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 0.6rem 0.85rem; cursor: pointer;">
+              <input type="radio" name="demo-pay-method" value="netbanking" />
+              <span style="font-size: 1.1rem;">🏦</span>
+              <div style="flex: 1;">
+                <div style="font-size: 0.85rem; font-weight: 600; color: #f8fafc;">Net Banking</div>
+                <div style="font-size: 0.75rem; color: #94a3b8;">All Major Indian Banks</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div id="pay-modal-status" style="margin-bottom: 0.75rem;"></div>
+
+        <button class="btn btn-primary btn-block" id="btn-submit-payment" type="button" style="padding: 0.75rem; font-size: 0.95rem; font-weight: 700;">
+          Pay Now
+        </button>
+      </div>
+
+      <!-- Success Screen -->
+      <div id="payment-modal-success" class="hidden" style="text-align: center; padding: 1rem 0;">
+        <div style="font-size: 3rem; margin-bottom: 0.5rem;">🎉</div>
+        <h4 style="margin: 0 0 0.5rem 0; color: #10b981; font-size: 1.25rem;">Payment Successful!</h4>
+        <p style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 0.25rem;">Charging session marked as <strong style="color: #f1f5f9;">COMPLETED</strong>.</p>
+        <p style="font-size: 0.8rem; color: #cbd5e1; font-family: monospace; background: rgba(0,0,0,0.3); padding: 0.4rem 0.75rem; border-radius: 6px; display: inline-block; margin-bottom: 1.25rem;" id="pay-modal-txn-id">
+          Txn ID: CS-PAY-...
+        </p>
+
+        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+          <button class="btn btn-primary btn-block" id="btn-pay-modal-download-invoice" type="button">
+            📄 Download Tax Invoice (PDF)
+          </button>
+          <button class="btn btn-secondary btn-block" id="btn-pay-modal-done" type="button">
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- App Client Scripts -->
+  <script src="/static/js/app.js?v=20261117_checkbox_align"></script>
+</body>
+</html>
+

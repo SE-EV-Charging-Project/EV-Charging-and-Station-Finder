@@ -1,0 +1,811 @@
+/* ==========================================================================
+   ChargeSlot Modern Minimalist Design System
+   ========================================================================== */
+
+:root {
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Color Palette */
+  --bg-primary: #0f172a;       /* Slate 900 */
+  --bg-surface: #1e293b;       /* Slate 800 */
+  --bg-surface-elevated: #334155; /* Slate 700 */
+  --bg-card: rgba(30, 41, 59, 0.85);
+
+  --text-main: #f8fafc;        /* Slate 50 */
+  --text-muted: #94a3b8;       /* Slate 400 */
+  --text-inverted: #0f172a;
+
+  /* Brand Accents */
+  --brand-green: #10b981;      /* Emerald 500 */
+  --brand-green-hover: #059669;/* Emerald 600 */
+  --brand-cyan: #06b6d4;       /* Cyan 500 */
+  --brand-blue: #3b82f6;       /* Blue 500 */
+  --status-occupied: #f59e0b;  /* Amber 500 */
+  --status-reserved: #8b5cf6;  /* Purple 500 */
+  --status-faulted: #ef4444;   /* Red 500 */
+
+  /* Borders & Shadows */
+  --border-color: rgba(148, 163, 184, 0.15);
+  --border-radius-sm: 6px;
+  --border-radius-md: 10px;
+  --border-radius-lg: 16px;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+
+  /* Transitions */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s ease;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  inline-size: 100%;
+  block-size: 100%;
+  font-family: var(--font-sans);
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --------------------------------------------------------------------------
+   App Header
+   -------------------------------------------------------------------------- */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-inline: 1.5rem;
+  padding-block: 0.75rem;
+  background-color: var(--bg-surface);
+  border-block-end: 1px solid var(--border-color);
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1000;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.brand-logo {
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  background: linear-gradient(135deg, var(--brand-green), var(--brand-cyan));
+  border-radius: var(--border-radius-md);
+  display: grid;
+  place-content: center;
+  font-size: 1.25rem;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
+}
+
+.brand-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(to right, #fff, #cbd5e1);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.brand-tagline {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.header-auth {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.user-badge {
+  font-size: 0.75rem;
+  padding-inline: 0.6rem;
+  padding-block: 0.25rem;
+  background-color: var(--bg-surface-elevated);
+  border-radius: 9999px;
+  color: var(--brand-cyan);
+  font-weight: 600;
+  border: 1px solid var(--border-color);
+}
+
+/* --------------------------------------------------------------------------
+   App Navigation Tabs
+   -------------------------------------------------------------------------- */
+.app-nav {
+  display: flex;
+  gap: 0.5rem;
+  padding-inline: 1.5rem;
+  padding-block: 0.5rem;
+  background-color: rgba(15, 23, 42, 0.95);
+  border-block-end: 1px solid var(--border-color);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.nav-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-inline: 1rem;
+  padding-block: 0.5rem;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-radius: var(--border-radius-md);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.nav-tab:hover {
+  color: var(--text-main);
+  background-color: var(--bg-surface);
+}
+
+.nav-tab.active {
+  color: #fff;
+  background-color: var(--bg-surface-elevated);
+  box-shadow: var(--shadow-sm);
+}
+
+/* --------------------------------------------------------------------------
+   Main Content Layout
+   -------------------------------------------------------------------------- */
+.app-main {
+  padding: 1.25rem;
+  max-inline-size: 1600px;
+  margin-inline: auto;
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* --------------------------------------------------------------------------
+   Cards & Layout Primitives
+   -------------------------------------------------------------------------- */
+.card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-lg);
+  padding: 1.25rem;
+  box-shadow: var(--shadow-md);
+}
+
+.card-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin-block-end: 0.25rem;
+}
+
+.card-desc {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  margin-block-end: 1rem;
+}
+
+.sub-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  margin-block: 0.75rem 0.5rem;
+  color: #e2e8f0;
+}
+
+.grid-2-col {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 1.25rem;
+}
+
+/* --------------------------------------------------------------------------
+   Forms & Controls
+   -------------------------------------------------------------------------- */
+.form-group {
+  margin-block-end: 0.875rem;
+}
+
+.form-group label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-block-end: 0.25rem;
+}
+
+.form-group input:not([type="checkbox"]):not([type="radio"]),
+.form-group select {
+  inline-size: 100%;
+  padding-inline: 0.75rem;
+  padding-block: 0.5rem;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  color: var(--text-main);
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.form-group input[type="checkbox"],
+.form-group input[type="radio"],
+input[type="checkbox"],
+input[type="radio"] {
+  inline-size: 1.15rem;
+  block-size: 1.15rem;
+  min-inline-size: 1.15rem;
+  max-inline-size: 1.15rem;
+  flex-shrink: 0;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--brand-green);
+  vertical-align: middle;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  border-color: var(--brand-green);
+}
+
+.input-with-button {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.input-with-button input {
+  flex: 1;
+}
+
+.form-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.form-check input {
+  inline-size: 1rem;
+  block-size: 1rem;
+  accent-color: var(--brand-green);
+}
+
+.form-check label {
+  margin-block-end: 0;
+  cursor: pointer;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin-block-end: 0.75rem;
+}
+
+/* --------------------------------------------------------------------------
+   Buttons
+   -------------------------------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding-inline: 1rem;
+  padding-block: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border-radius: var(--border-radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-decoration: none;
+}
+
+.btn-primary {
+  background-color: var(--brand-green);
+  color: var(--text-inverted);
+}
+
+.btn-primary:hover {
+  background-color: var(--brand-green-hover);
+}
+
+.btn-secondary {
+  background-color: var(--bg-surface-elevated);
+  color: var(--text-main);
+}
+
+.btn-secondary:hover {
+  background-color: #475569;
+}
+
+.btn-outline {
+  background-color: transparent;
+  border-color: var(--border-color);
+  color: var(--text-main);
+}
+
+.btn-outline:hover {
+  background-color: var(--bg-surface-elevated);
+}
+
+.btn-sm {
+  padding-inline: 0.75rem;
+  padding-block: 0.35rem;
+  font-size: 0.75rem;
+}
+
+.btn-block {
+  inline-size: 100%;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--brand-cyan);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.btn-link:hover {
+  text-decoration: underline;
+}
+
+.button-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* --------------------------------------------------------------------------
+   Stations & Map Layout
+   -------------------------------------------------------------------------- */
+.stations-layout {
+  display: grid;
+  grid-template-columns: 420px 1fr;
+  gap: 1.25rem;
+  min-block-size: calc(100vh - 140px);
+}
+
+@media (max-width: 960px) {
+  .stations-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.stations-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-block-size: calc(100vh - 140px);
+  overflow-y: auto;
+}
+
+.stations-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.stations-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.station-item-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  padding: 1rem;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.station-item-card:hover {
+  border-color: var(--brand-green);
+  transform: translateY(-1px);
+}
+
+.station-item-card.station-oos {
+  border-left: 4px solid var(--status-faulted);
+}
+
+.station-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-block-end: 0.25rem;
+}
+
+.station-name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.station-distance {
+  font-size: 0.75rem;
+  color: var(--brand-cyan);
+  font-weight: 600;
+}
+
+.station-address {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-block-end: 0.5rem;
+}
+
+.station-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.tag-badge {
+  font-size: 0.7rem;
+  padding-inline: 0.4rem;
+  padding-block: 0.15rem;
+  background-color: var(--bg-primary);
+  border-radius: 4px;
+  color: #cbd5e1;
+}
+
+.tag-badge.avail {
+  color: var(--brand-green);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+/* Map Container */
+.map-wrapper {
+  position: relative;
+  min-block-size: 450px;
+  border-radius: var(--border-radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-md);
+}
+
+#map-container {
+  inline-size: 100%;
+  block-size: 100%;
+  min-block-size: 450px;
+}
+
+.map-legend {
+  position: absolute;
+  inset-block-end: 1rem;
+  inset-inline-start: 1rem;
+  background-color: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(8px);
+  padding-inline: 0.75rem;
+  padding-block: 0.5rem;
+  border-radius: var(--border-radius-md);
+  border: 1px solid var(--border-color);
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  z-index: 500;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.marker-dot {
+  inline-size: 8px;
+  block-size: 8px;
+  border-radius: 50%;
+}
+
+.marker-dot.available { background-color: var(--brand-green); }
+.marker-dot.occupied  { background-color: var(--status-occupied); }
+.marker-dot.reserved  { background-color: var(--status-reserved); }
+.marker-dot.oos       { background-color: var(--status-faulted); }
+
+/* --------------------------------------------------------------------------
+   Metrics Grid & Battery Calculator
+   -------------------------------------------------------------------------- */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+  margin-block-start: 1rem;
+}
+
+.metric-card {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  padding: 0.875rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.metric-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--brand-green);
+  margin-block: 0.2rem;
+}
+
+.metric-sub {
+  font-size: 0.7rem;
+  color: #64748b;
+}
+
+/* Slot Timeline Grid */
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+  gap: 0.4rem;
+  max-block-size: 260px;
+  overflow-y: auto;
+  padding: 0.5rem;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  margin-block-end: 1rem;
+}
+
+.slot-pill {
+  padding-block: 0.4rem;
+  text-align: center;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  border-radius: var(--border-radius-sm);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  background-color: var(--bg-surface);
+  transition: all var(--transition-fast);
+}
+
+.slot-pill:hover:not(.disabled) {
+  border-color: var(--brand-green);
+  background-color: var(--bg-surface-elevated);
+}
+
+.slot-pill.selected {
+  background-color: var(--brand-green);
+  color: var(--text-inverted);
+  font-weight: 600;
+}
+
+.slot-pill.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
+
+/* --------------------------------------------------------------------------
+   Navigation App Deep Links
+   -------------------------------------------------------------------------- */
+.nav-handoff-section {
+  margin-block-start: 1.25rem;
+  padding-block-start: 1rem;
+  border-block-start: 1px solid var(--border-color);
+}
+
+.nav-app-buttons {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.5rem;
+}
+
+.nav-app-btn {
+  font-size: 0.8125rem;
+  text-align: center;
+}
+
+/* --------------------------------------------------------------------------
+   Live Telemetry Connectors Dashboard
+   -------------------------------------------------------------------------- */
+.dashboard-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-block-end: 1rem;
+}
+
+.ws-connection-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.status-pulse {
+  inline-size: 10px;
+  block-size: 10px;
+  border-radius: 50%;
+  background-color: var(--brand-green);
+  box-shadow: 0 0 8px var(--brand-green);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(0.95); opacity: 0.7; }
+  50% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.7; }
+}
+
+.dashboard-connectors-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.connector-live-card {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.connector-live-card.status-available { border-inline-start: 4px solid var(--brand-green); }
+.connector-live-card.status-occupied  { border-inline-start: 4px solid var(--status-occupied); }
+.connector-live-card.status-reserved  { border-inline-start: 4px solid var(--status-reserved); }
+.connector-live-card.status-faulted   { border-inline-start: 4px solid var(--status-faulted); }
+
+.connector-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding-inline: 0.4rem;
+  padding-block: 0.15rem;
+  border-radius: 4px;
+}
+
+/* --------------------------------------------------------------------------
+   Tables
+   -------------------------------------------------------------------------- */
+.table-container {
+  overflow-x: auto;
+}
+
+.data-table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.data-table th,
+.data-table td {
+  padding-inline: 0.75rem;
+  padding-block: 0.6rem;
+  border-block-end: 1px solid var(--border-color);
+  text-align: start;
+}
+
+.data-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------
+   Native HTML5 <dialog> Modal
+   -------------------------------------------------------------------------- */
+.modal-dialog {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: auto;
+  max-inline-size: 420px;
+  inline-size: 90%;
+  color: var(--text-main);
+}
+
+.modal-dialog::backdrop {
+  background-color: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+}
+
+.modal-content {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-lg);
+  padding: 1.5rem;
+  box-shadow: var(--shadow-lg);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-block-end: 1rem;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.5rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.modal-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-block-end: 1rem;
+  border-block-end: 1px solid var(--border-color);
+  padding-block-end: 0.5rem;
+}
+
+.modal-tab {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding-inline: 0.5rem;
+  padding-block: 0.25rem;
+  border-radius: var(--border-radius-sm);
+}
+
+.modal-tab.active {
+  color: var(--brand-green);
+  font-weight: 600;
+}
+
+/* Helpers */
+.hidden { display: none !important; }
+.text-center { text-align: center; }
+.empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.alert-banner {
+  background-color: #064e3b;
+  color: #a7f3d0;
+  border: 1px solid #059669;
+  padding-inline: 1.5rem;
+  padding-block: 0.6rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8125rem;
+}
+
+.alert-close {
+  background: none;
+  border: none;
+  color: #a7f3d0;
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+

@@ -383,3 +383,45 @@ def test_unauthenticated_requests_rejected(client: TestClient):
         json={"default_target_battery": 90},
     )
     assert resp_patch.status_code == 401
+
+
+def test_profile_change_password_flow(client: TestClient, driver_user: User):
+    """Verifies change-password endpoint handles current verification, policy, and updates."""
+    token = make_token(driver_user)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Wrong current password
+    resp_bad = client.post(
+        "/api/v1/accounts/change-password",
+        json={"current_password": "WrongPassword123!", "new_password": "ValidNewPassword123!"},
+        headers=headers,
+    )
+    assert resp_bad.status_code == 400
+    assert "Current password is incorrect" in resp_bad.json()["detail"]
+
+    # Weak new password failing policy
+    resp_weak = client.post(
+        "/api/v1/accounts/change-password",
+        json={"current_password": "DriverPass123!", "new_password": "weak"},
+        headers=headers,
+    )
+    assert resp_weak.status_code in (400, 422)
+
+    # Valid change password
+    resp_ok = client.post(
+        "/api/v1/accounts/change-password",
+        json={"current_password": "DriverPass123!", "new_password": "NewSecretPassword123!@"},
+        headers=headers,
+    )
+    assert resp_ok.status_code == 200
+    assert resp_ok.json()["status"] == "success"
+
+    # Cannot reuse same password
+    resp_same = client.post(
+        "/api/v1/accounts/change-password",
+        json={"current_password": "NewSecretPassword123!@", "new_password": "NewSecretPassword123!@"},
+        headers=headers,
+    )
+    assert resp_same.status_code == 400
+    assert "cannot be the same" in resp_same.json()["detail"].lower()
+
