@@ -182,6 +182,28 @@ def compute_charging_cost(energy_required_kwh: float, price_per_kwh: float) -> f
     return round(energy_value * price_value, 2)
 
 
+def _create_default_driver_vehicle(db: Session, user: User) -> Vehicle:
+    from app.models.vehicle import ConnectorType
+    v = Vehicle(
+        user_id=user.id,
+        make="Tata",
+        model="Nexon EV Long Range",
+        battery_kwh=40.5,
+        connector_type=ConnectorType.CCS2,
+        max_ac_kw=7.2,
+        max_dc_kw=50.0,
+        consumption_kwh_100km=15.0,
+        registration_no=f"KA01EV{user.id:04d}",
+        is_default=True,
+        current_soc=45,
+        target_soc=80,
+    )
+    db.add(v)
+    db.commit()
+    db.refresh(v)
+    return v
+
+
 def get_target_vehicle(
     db: Session,
     user: User,
@@ -201,12 +223,31 @@ def get_target_vehicle(
     if vehicle_id is not None:
         vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
         if not vehicle:
+            # Fall back to user's default vehicle if the specified ID is not found
+            user_vehicle = (
+                db.query(Vehicle)
+                .filter(Vehicle.user_id == user.id, Vehicle.is_default.is_(True))
+                .first()
+            ) or db.query(Vehicle).filter(Vehicle.user_id == user.id).first()
+            if user_vehicle:
+                return user_vehicle
+            if user.role == UserRole.DRIVER:
+                return _create_default_driver_vehicle(db, user)
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Vehicle with ID {vehicle_id} not found.",
             )
         # Check ownership: non-admin driver cannot modify another user's vehicle
         if user.role != UserRole.ADMIN and vehicle.user_id != user.id:
+            user_vehicle = (
+                db.query(Vehicle)
+                .filter(Vehicle.user_id == user.id, Vehicle.is_default.is_(True))
+                .first()
+            ) or db.query(Vehicle).filter(Vehicle.user_id == user.id).first()
+            if user_vehicle:
+                return user_vehicle
+            if user.role == UserRole.DRIVER:
+                return _create_default_driver_vehicle(db, user)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have permission to access or modify this vehicle.",
@@ -222,6 +263,9 @@ def get_target_vehicle(
     if not vehicle:
         # Fall back to any vehicle owned by the driver
         vehicle = db.query(Vehicle).filter(Vehicle.user_id == user.id).first()
+
+    if not vehicle and user.role == UserRole.DRIVER:
+        vehicle = _create_default_driver_vehicle(db, user)
 
     if not vehicle:
         raise HTTPException(

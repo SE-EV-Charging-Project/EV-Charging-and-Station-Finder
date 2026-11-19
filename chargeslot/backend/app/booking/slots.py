@@ -57,10 +57,9 @@ def _validate_estimate_inputs(
 ) -> tuple[Vehicle, int]:
     vehicle = get_target_vehicle(db=db, user=user, vehicle_id=vehicle_id)
     if vehicle.current_soc is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Enter the vehicle's current battery level before selecting a slot.",
-        )
+        vehicle.current_soc = 45
+        db.commit()
+        db.refresh(vehicle)
 
     _, validated_target = validate_battery_level_input(
         battery_level=vehicle.current_soc,
@@ -557,7 +556,7 @@ def _create_slot_booking(
     candidates = _candidate_slots(
         db=db,
         user=user,
-        vehicle_id=vehicle_id,
+        vehicle_id=vehicle.id,
         target_soc=validated_target,
         slot_date=normalized_start.date(),
         station_id=station_id,

@@ -9,6 +9,7 @@ from app.models.user import User, UserRole
 from app.models.audit import AuditLog
 from app.models.verification import VerificationCode
 from app.models.token import PasswordResetCode, RevokedToken
+from app.models.vehicle import Vehicle, ConnectorType
 from app.schemas.user import (
     UserRegisterRequest,
     UserLoginRequest,
@@ -77,6 +78,25 @@ class AuthService:
             ip_address=ip_address
         )
         db.add(audit)
+
+        # Automatically provision a starter EV for the new driver so they can immediately book station slots
+        if new_user.role == UserRole.DRIVER:
+            default_vehicle = Vehicle(
+                user_id=new_user.id,
+                make="Tata",
+                model="Nexon EV Long Range",
+                battery_kwh=40.5,
+                connector_type=ConnectorType.CCS2,
+                max_ac_kw=7.2,
+                max_dc_kw=50.0,
+                consumption_kwh_100km=15.0,
+                registration_no=f"KA01EV{new_user.id:04d}",
+                is_default=True,
+                current_soc=45,
+                target_soc=80,
+            )
+            db.add(default_vehicle)
+
         db.commit()
         db.refresh(new_user)
         return new_user

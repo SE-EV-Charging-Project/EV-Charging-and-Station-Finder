@@ -1327,11 +1327,41 @@
     loadStations();
   }
 
+  async function loadUserVehicles() {
+    if (!STATE.token || !DOM.batteryVehicleSelect) return;
+
+    try {
+      const data = await apiRequest('/vehicles');
+      const list = data.items || data.vehicles || data || [];
+      if (Array.isArray(list) && list.length > 0) {
+        DOM.batteryVehicleSelect.innerHTML = list.map(v => {
+          VEHICLES[String(v.id)] = {
+            name: `${v.make} ${v.model}`,
+            capacity: v.battery_kwh || 40.5,
+            consumption: v.consumption_kwh_100km || 15.0,
+          };
+          return `<option value="${v.id}" ${v.is_default ? 'selected' : ''}>
+            ${escapeHtml(v.make)} ${escapeHtml(v.model)} (${v.battery_kwh} kWh, ${v.consumption_kwh_100km || 15.0} kWh/100km)
+          </option>`;
+        }).join('');
+
+        const defaultVehicle = list.find(v => v.is_default) || list[0];
+        if (defaultVehicle) {
+          DOM.batteryVehicleSelect.value = defaultVehicle.id;
+        }
+        calculateBatteryEstimates();
+      }
+    } catch {
+      // Keep static defaults if vehicles couldn't be loaded
+    }
+  }
+
   function updateUserUI() {
     if (STATE.user && STATE.token) {
       DOM.currentUserBadge.textContent = `${STATE.user.role}: ${STATE.user.email.split('@')[0]}`;
       DOM.btnAuthModal.classList.add('hidden');
       DOM.btnLogout.classList.remove('hidden');
+      loadUserVehicles();
     } else {
       DOM.currentUserBadge.textContent = 'Guest Mode';
       DOM.btnAuthModal.classList.remove('hidden');
@@ -1359,6 +1389,9 @@
         }
         if (tab.dataset.tab === 'tab-profile') {
           loadProfile();
+        }
+        if (tab.dataset.tab === 'tab-booking') {
+          loadUserVehicles();
         }
       });
     });
